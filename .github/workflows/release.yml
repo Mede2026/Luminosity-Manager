@@ -1,9 +1,10 @@
 name: Release
 
-# Pousser un tag (ex. v0.1) compile LuminosityManager.exe et publie une Release GitHub.
+# Changer le fichier VERSION (ex. 0.1 -> 0.2) compile LuminosityManager.exe et publie une Release GitHub.
 on:
   push:
-    tags: ['v*']
+    paths: ['VERSION']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,12 +16,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Installer MinGW-w64
         run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
+      - name: Lire la version
+        run: echo "VERSION=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
       - name: Compiler
         run: ./build.sh
       - name: Publier la Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Luminosity Manager ${{ github.ref_name }}
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Luminosity Manager ${{ env.VERSION }}
           files: LuminosityManager.exe
           body: |
             Télécharge **LuminosityManager.exe** ci-dessous et double-clique dessus. Aucune installation.

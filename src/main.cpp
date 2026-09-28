@@ -34,7 +34,7 @@ enum { ID_INFO = 100, ID_AUTO, ID_BRIGHTER, ID_DARKER, ID_RESET, ID_STARTUP, ID_
        ID_S_SOURCE, ID_S_MEASURE, ID_S_BRIGHT, ID_PROGRESS, ID_S_OFFSET, ID_S_NEXT, ID_S_DETECTED };
 
 static const wchar_t *APP_NAME = L"Luminosity Manager";
-static const wchar_t *APP_VERSION = L"0.1";
+static const wchar_t *APP_VERSION = L"0.1";  // garder identique au fichier VERSION;
 static const wchar_t *REG_KEY  = L"Software\\LuminosityManager";
 static const wchar_t *RUN_KEY  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 

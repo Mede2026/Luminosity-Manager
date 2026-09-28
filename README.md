@@ -25,7 +25,7 @@ L'app choisit automatiquement la meilleure source :
 - **Lancer au démarrage de Windows** (démarre caché près de l'horloge)
 
 ## Publier une version
-Pousser un tag (`git tag v0.2 && git push origin v0.2`) : GitHub Actions compile l'app et crée la Release.
+Changer le numéro dans le fichier `VERSION` (ex. `0.2`) et pousser : GitHub Actions compile l'app et crée la Release `v0.2`.
 
 ## Écrans compatibles
 - Écran de portable : via WMI (Windows).
