@@ -471,7 +471,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        if (IsDialogMessageW(g_hwnd, &msg)) continue;    // Tab / Entree entre les controles
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

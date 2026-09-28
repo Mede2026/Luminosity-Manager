@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luminosity Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Icones (dessins vectoriels reutilises) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-bright" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" class="fill"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 24 24"><rect x="3" y="6.5" width="13" height="11" rx="2.5"/><path d="m16 10.5 5-3v9l-5-3"/></symbol>
+    <symbol id="i-apps" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.8"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.3"/></symbol>
+    <symbol id="i-update" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4.5h-4.5"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v8M7 6.3a7.5 7.5 0 1 0 10 0"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l1 13h9l1-13"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <!-- Menu de gauche, comme les Parametres de Windows 11 -->
+  <nav class="side">
+    <div class="brand">
+      <svg class="brand-icon"><use href="#i-sun"/></svg>
+      <div><b>Luminosity</b><small>Manager <span id="version"></span></small></div>
+    </div>
+    <a class="nav active" data-page="home"><svg><use href="#i-home"/></svg>Accueil</a>
+    <a class="nav" data-page="brightness"><svg><use href="#i-bright"/></svg>Luminosité</a>
+    <a class="nav" data-page="camera"><svg><use href="#i-cam"/></svg>Webcam</a>
+    <a class="nav" data-page="profiles"><svg><use href="#i-apps"/></svg>Profils d'apps</a>
+    <a class="nav" data-page="keys"><svg><use href="#i-key"/></svg>Raccourcis</a>
+    <a class="nav" data-page="city"><svg><use href="#i-pin"/></svg>Ville</a>
+    <a class="nav" data-page="updates"><svg><use href="#i-update"/></svg>Mises à jour<span class="dot" id="upd-dot" hidden></span></a>
+    <div class="spacer"></div>
+    <label class="master">
+      <svg><use href="#i-power"/></svg>
+      <span id="master-label">Activé</span>
+      <input type="checkbox" class="switch" id="enabled">
+    </label>
+  </nav>
+
+  <main>
+    <!-- ACCUEIL -->
+    <section class="page active" id="page-home">
+      <h1>Accueil</h1>
+      <div class="hero card">
+        <div class="gauge">
+          <svg viewBox="0 0 120 120">
+            <circle class="track" cx="60" cy="60" r="50"/>
+            <circle class="value" id="gauge-arc" cx="60" cy="60" r="50"/>
+          </svg>
+          <div class="gauge-center">
+            <div class="gauge-num"><span id="bright">--</span><small>%</small></div>
+          </div>
+          <div class="gauge-label">Écran</div>
+        </div>
+        <div class="hero-info">
+          <div class="pill" id="status"><i></i><span>Chargement…</span></div>
+          <div class="facts">
+            <div class="fact"><span>Source</span><b id="source">—</b></div>
+            <div class="fact"><span>Lumière</span><b id="light">—</b></div>
+            <div class="fact wide"><span>Détectée + ajout → écran</span><b id="calc">—</b></div>
+          </div>
+          <div class="actions">
+            <button class="accent" id="btn-measure">Mesurer maintenant</button>
+            <button id="btn-toggle">Désactiver</button>
+          </div>
+        </div>
+        <div class="thumb" id="home-thumb">
+          <canvas width="64" height="48"></canvas>
+          <div class="thumb-empty"><svg><use href="#i-sun"/></svg><span>Mode soleil</span></div>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="card-head">
+          <h2>Dernières 24 heures</h2>
+          <div class="legend"><span class="lg-light">Lumière ambiante</span><span class="lg-screen">Luminosité de l'écran</span></div>
+        </div>
+        <div class="chart" id="chart">
+          <svg id="chart-svg"></svg>
+          <div class="tooltip" id="tooltip" hidden></div>
+          <div class="chart-empty" id="chart-empty">Les données apparaîtront ici, minute par minute.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LUMINOSITE -->
+    <section class="page" id="page-brightness">
+      <h1>Luminosité</h1>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>Ajout à la luminosité détectée</b><small>Plus clair ou plus sombre que ce que l'app calcule. Change aussi tout seul quand tu règles la luminosité toi-même.</small></div>
+          <div class="row-ctl slider-ctl"><input type="range" id="offset" min="-50" max="50" step="1"><output id="offset-val">+0 %</output></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Minimum</b><small>L'écran ne descend jamais plus bas.</small></div>
+          <div class="row-ctl"><div class="stepper" data-id="min" data-min="1" data-max="99"></div></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Maximum</b><small>L'écran ne monte jamais plus haut.</small></div>
+          <div class="row-ctl"><div class="stepper" data-id="max" data-min="2" data-max="100"></div></div>
+        </div>
+      </div>
+      <div class="card curve-card">
+        <div class="card-head"><h2>Ta courbe</h2><small class="muted">Luminosité de l'écran selon la lumière de la pièce</small></div>
+        <svg id="curve" viewBox="0 0 600 180" preserveAspectRatio="none"></svg>
+        <div class="curve-axis"><span>Nuit</span><span>Pièce sombre</span><span>Pièce éclairée</span><span>Plein jour</span></div>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>Lancer au démarrage de Windows</b><small>L'app démarre cachée près de l'horloge.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="startup"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WEBCAM -->
+    <section class="page" id="page-camera">
+      <h1>Webcam</h1>
+      <p class="intro">S'il n'y a pas de capteur de lumière, l'app prend une petite photo de temps en temps pour mesurer la lumière de la pièce. La photo n'est jamais enregistrée.</p>
+      <div class="card cam-preview">
+        <div class="thumb big" id="cam-thumb">
+          <canvas width="64" height="48"></canvas>
+          <div class="thumb-empty"><svg><use href="#i-cam"/></svg><span>Pas encore de photo</span></div>
+        </div>
+        <div class="cam-side">
+          <div class="cam-stats">
+            <div class="fact"><span>Clarté de l'image</span><b id="cam-level">—</b></div>
+            <div class="fact"><span>Lumière estimée</span><b id="cam-lux">—</b></div>
+            <div class="fact"><span>Prochaine photo</span><b id="cam-next">—</b></div>
+          </div>
+          <div class="quality" id="cam-quality"></div>
+        </div>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>Utiliser la webcam</b><small>Seulement s'il n'y a pas de capteur de lumière.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="useCam"></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Caméra</b><small>« Automatique » évite la caméra infrarouge (Windows Hello).</small></div>
+          <div class="row-ctl"><select id="camera"></select></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Une photo toutes les</b><small>De 5 secondes à 1 heure.</small></div>
+          <div class="row-ctl"><div class="stepper" data-id="interval" data-min="5" data-max="3600" data-unit="s"></div></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Calibrer</b><small>Dans une pièce éclairée normalement : cette lumière devient ta référence.</small></div>
+          <div class="row-ctl"><button id="btn-calibrate">Calibrer maintenant</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROFILS -->
+    <section class="page" id="page-profiles">
+      <h1>Profils d'apps</h1>
+      <p class="intro">Luminosité fixe quand une application est au premier plan. Exemple : LumaFusion à 100 % pour voir les vraies couleurs de tes vidéos.</p>
+      <div class="card add-profile">
+        <input type="text" id="p-exe" placeholder="Nom de l'app (ex. LumaFusion.exe)" spellcheck="false">
+        <button id="btn-pick" title="Prend la dernière app utilisée avant d'ouvrir cette fenêtre">App active</button>
+        <div class="slider-ctl"><input type="range" id="p-pct" min="1" max="100" value="100"><output id="p-pct-val">100 %</output></div>
+        <button class="accent" id="btn-add">Ajouter</button>
+      </div>
+      <div class="card group" id="profile-list"></div>
+    </section>
+
+    <!-- RACCOURCIS -->
+    <section class="page" id="page-keys">
+      <h1>Raccourcis clavier</h1>
+      <p class="intro">Ils fonctionnent partout, même quand la fenêtre est cachée. Tu peux les programmer sur ton MacroPad. Clique sur un raccourci puis appuie sur la nouvelle combinaison.</p>
+      <div class="card group" id="key-list"></div>
+      <div class="row-end"><button id="btn-keys-reset">Remettre par défaut</button></div>
+    </section>
+
+    <!-- VILLE -->
+    <section class="page" id="page-city">
+      <h1>Ville</h1>
+      <p class="intro">Utilisée en mode Soleil (sans capteur ni webcam) : l'app calcule la hauteur du soleil chez toi.</p>
+      <div class="card city-search">
+        <input type="text" id="city" placeholder="Chercher une ville…" spellcheck="false">
+        <button class="accent" id="btn-city">Chercher</button>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b id="city-name">—</b><small id="city-coords">—</small></div>
+          <div class="row-ctl"><svg class="big-icon"><use href="#i-pin"/></svg></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Coordonnées manuelles</b><small>Si tu n'as pas internet.</small></div>
+          <div class="row-ctl coords">
+            <input type="text" id="lat" placeholder="Latitude">
+            <input type="text" id="lon" placeholder="Longitude">
+            <button id="btn-latlon">Appliquer</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MISES A JOUR -->
+    <section class="page" id="page-updates">
+      <h1>Mises à jour</h1>
+      <div class="card update-card">
+        <svg class="update-icon"><use href="#i-sun"/></svg>
+        <div class="update-text"><b id="upd-title">Luminosity Manager</b><small id="upd-status"></small></div>
+        <button id="btn-check">Vérifier</button>
+        <button class="accent" id="btn-update" hidden>Mettre à jour</button>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>Vérifier automatiquement</b><small>Une fois par jour, sur GitHub.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="updateCheck"></div>
+        </div>
+        <div class="row link" id="btn-repo">
+          <div class="row-text"><b>Page GitHub du projet</b><small>github.com/Mede2026/Luminosity-Manager</small></div>
+          <div class="row-ctl chevron">›</div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

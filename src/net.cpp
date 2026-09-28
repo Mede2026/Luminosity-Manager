@@ -77,55 +77,6 @@ static bool HttpGet(const wchar_t *url, char **data, DWORD *size, DWORD maxSize,
     return ok;
 }
 
-// Lit la chaine JSON qui suit "key": dans src (gere \" \\ \/ et \uXXXX). Renvoie false si absente.
-static bool JsonString(const char *src, const char *key, wchar_t *out, int n) {
-    char pat[64];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(src, pat);
-    if (!p) return false;
-    p += strlen(pat);
-    while (*p == ' ' || *p == ':') p++;
-    if (*p != '"') return false;
-    p++;
-    char tmp[1024];
-    int len = 0;
-    while (*p && *p != '"' && len < (int)sizeof(tmp) - 4) {
-        if (*p == '\\' && p[1]) {
-            p++;
-            if (*p == 'u' && p[1] && p[2] && p[3] && p[4]) {        // \uXXXX -> UTF-8
-                char hex[5] = { p[1], p[2], p[3], p[4], 0 };
-                unsigned cp = (unsigned)strtoul(hex, NULL, 16);
-                if (cp < 0x80) tmp[len++] = (char)cp;
-                else if (cp < 0x800) { tmp[len++] = (char)(0xC0 | (cp >> 6)); tmp[len++] = (char)(0x80 | (cp & 0x3F)); }
-                else { tmp[len++] = (char)(0xE0 | (cp >> 12)); tmp[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-                       tmp[len++] = (char)(0x80 | (cp & 0x3F)); }
-                p += 5;
-                continue;
-            }
-            tmp[len++] = *p == 'n' ? ' ' : *p;
-            p++;
-            continue;
-        }
-        tmp[len++] = *p++;
-    }
-    tmp[len] = 0;
-    MultiByteToWideChar(CP_UTF8, 0, tmp, -1, out, n);
-    out[n - 1] = 0;
-    return true;
-}
-
-static bool JsonNumber(const char *src, const char *key, double *v) {
-    char pat[64];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(src, pat);
-    if (!p) return false;
-    p += strlen(pat);
-    while (*p == ' ' || *p == ':') p++;
-    char *end;
-    *v = strtod(p, &end);
-    return end != p;
-}
-
 // "v0.10" > "v0.9" : compare chaque nombre separe par des points
 static bool IsNewer(const wchar_t *remote, const wchar_t *local) {
     if (*remote == L'v' || *remote == L'V') remote++;

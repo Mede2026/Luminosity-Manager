@@ -115,6 +115,31 @@ void StartUpdateDownload();
 void StartCitySearch(const wchar_t *city);
 bool LaunchUpdatedAndExit();
 
+// json.cpp : lire / ecrire du JSON simple
+bool JsonString(const char *src, const char *key, wchar_t *out, int n);
+bool JsonNumber(const char *src, const char *key, double *v);
+struct JsonOut {                                  // construit un texte JSON (a liberer avec free(buf))
+    wchar_t *buf = NULL;
+    size_t len = 0, cap = 0;
+    void Grow(size_t need);
+    void Raw(const wchar_t *fmt, ...);
+    void Str(const wchar_t *s);
+    void Key(const wchar_t *k);
+    void Num(const wchar_t *k, double v);
+    void Bool(const wchar_t *k, bool v);
+    void KStr(const wchar_t *k, const wchar_t *v);
+};
+
+// webview.cpp : le navigateur integre (WebView2) qui affiche l'interface
+bool WebViewCreate(HWND parent, bool transparent, COLORREF bg);   // false = WebView2 introuvable
+void WebViewDestroy();
+void WebViewResize();
+void WebViewMoved();
+bool WebViewPost(const wchar_t *json);            // envoie un message a la page
+bool WebViewAlive();
+void OnPageMessage(const char *json);             // ui.cpp : message recu de la page (UTF-8)
+void OnWebViewFailed();                           // ui.cpp : WebView2 n'a pas pu demarrer
+
 // ui.cpp : fenetre et icone
 bool CreateMainWindow(HINSTANCE inst, bool showWindow, int show);
 void RegisterHotkeys();
