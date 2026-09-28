@@ -28,17 +28,26 @@ static ISensor *OpenLightSensor() {
     return sensor;
 }
 
-static bool ReadLux(ISensor *s, double *lux) {
-    ISensorDataReport *rep = NULL;
-    if (FAILED(s->GetData(&rep))) return false;
+static bool ReadValue(ISensorDataReport *rep, REFPROPERTYKEY key, double *out) {
     PROPVARIANT v;
     PropVariantInit(&v);
     bool ok = false;
-    if (SUCCEEDED(rep->GetSensorValue(SENSOR_DATA_TYPE_LIGHT_LEVEL_LUX, &v))) {
-        if (v.vt == VT_R4) { *lux = v.fltVal; ok = true; }
-        else if (v.vt == VT_R8) { *lux = v.dblVal; ok = true; }
+    if (SUCCEEDED(rep->GetSensorValue(key, &v))) {
+        if (v.vt == VT_R4) { *out = v.fltVal; ok = true; }
+        else if (v.vt == VT_R8) { *out = v.dblVal; ok = true; }
+        else if (v.vt == VT_UI4) { *out = v.ulVal; ok = true; }
     }
     PropVariantClear(&v);
+    return ok;
+}
+
+// Lumiere (lux) et, si le capteur sait la mesurer, sa couleur (Kelvin)
+static bool ReadLux(ISensor *s, double *lux, double *kelvin) {
+    ISensorDataReport *rep = NULL;
+    if (FAILED(s->GetData(&rep))) return false;
+    bool ok = ReadValue(rep, SENSOR_DATA_TYPE_LIGHT_LEVEL_LUX, lux);
+    double k;
+    if (ReadValue(rep, SENSOR_DATA_TYPE_LIGHT_TEMPERATURE_KELVIN, &k) && k >= 1500 && k <= 15000) *kelvin = k;
     rep->Release();
     return ok;
 }
@@ -47,12 +56,13 @@ static ISensor *g_sensor;
 static int g_sensorRetry;
 
 // Lit le capteur ; le recherche de nouveau toutes les 15 s s'il n'y en a pas.
-bool SensorReadLux(double *lux, bool retryNow) {
+bool SensorReadLux(double *lux, double *kelvin, bool retryNow) {
+    *kelvin = -1;
     if (!g_sensor && (retryNow || ++g_sensorRetry >= 15)) {
         g_sensorRetry = 0;
         g_sensor = OpenLightSensor();
     }
-    if (g_sensor && ReadLux(g_sensor, lux)) return true;
+    if (g_sensor && ReadLux(g_sensor, lux, kelvin)) return true;
     SensorClose();
     return false;
 }
@@ -123,7 +133,7 @@ static void InitLinear() {
     }
 }
 
-struct FrameStats { int mean; double lin; double dark, bright; };   // dark / bright : part de pixels noirs / blancs
+struct FrameStats { int mean; double lin; double dark, bright; double r, g, b; };   // dark / bright : part de pixels noirs / blancs ; r g b : couleur moyenne
 
 static bool AnalyzeFrame(IMFSample *smp, UINT32 w, UINT32 h, bool bottomUp, bool thumb, FrameStats *st) {
     IMFMediaBuffer *buf = NULL;
@@ -145,13 +155,23 @@ static bool AnalyzeFrame(IMFSample *smp, UINT32 w, UINT32 h, bool bottomUp, bool
     if (scan0 && w >= 8 && h >= 8) {
         // Histogramme de clarte (1 pixel sur 16)
         unsigned hist[256] = {};
-        unsigned n = 0;
+        unsigned n = 0, nc = 0;
+        double rs = 0, gs = 0, bs = 0;
         for (UINT32 y = 0; y < h; y += 4)
             for (UINT32 x = 0; x < w; x += 4) {
                 const BYTE *px = scan0 + (LONG)y * pitch + x * 4;
-                hist[(px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8]++;
+                int luma = (px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8;
+                hist[luma]++;
                 n++;
+                // couleur de la lumiere : seulement les pixels ni trop sombres ni satures
+                if (luma > 20 && luma < 235 && px[0] < 250 && px[1] < 250 && px[2] < 250) {
+                    rs += g_linear[px[2]]; gs += g_linear[px[1]]; bs += g_linear[px[0]];
+                    nc++;
+                }
             }
+        st->r = nc ? rs / nc : 0;
+        st->g = nc ? gs / nc : 0;
+        st->b = nc ? bs / nc : 0;
         // Moyenne "robuste" : on ignore les 5 % les plus sombres et les 5 % les plus clairs
         // (une lampe ou une fenetre dans l'image ne doit pas tout fausser)
         unsigned lo = n * 5 / 100, hi = n - n * 5 / 100, seen = 0;
@@ -205,6 +225,7 @@ static bool ReadFrames(IMFSourceReader *reader, int frames, UINT32 w, UINT32 h, 
         FrameStats st;
         if (got > frames - 3 && AnalyzeFrame(smp, w, h, bottomUp, got == frames, &st)) {
             acc.lin += st.lin; acc.mean += st.mean; acc.dark += st.dark; acc.bright += st.bright;
+            acc.r += st.r; acc.g += st.g; acc.b += st.b;
             used++;
         }
         smp->Release();
@@ -214,7 +235,22 @@ static bool ReadFrames(IMFSourceReader *reader, int frames, UINT32 w, UINT32 h, 
     out->mean = acc.mean / used;
     out->dark = acc.dark / used;
     out->bright = acc.bright / used;
+    out->r = acc.r / used;
+    out->g = acc.g / used;
+    out->b = acc.b / used;
     return true;
+}
+
+// Couleur moyenne (RGB lineaire) -> temperature de couleur en Kelvin (formule de McCamy)
+static double RgbToKelvin(double r, double g, double b) {
+    double X = 0.4124 * r + 0.3576 * g + 0.1805 * b;
+    double Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    double Z = 0.0193 * r + 0.1192 * g + 0.9505 * b;
+    double sum = X + Y + Z;
+    if (sum <= 0) return -1;
+    double x = X / sum, y = Y / sum;
+    double nn = (x - 0.3320) / (0.1858 - y);
+    return 449 * nn * nn * nn + 3525 * nn * nn + 6823.3 * nn + 5520.33;
 }
 
 bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, CamShot *out) {
@@ -268,6 +304,17 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
             gainFixed = SUCCEEDED(amp->Set(VideoProcAmp_Gain, gdef, VideoProcAmp_Flags_Manual));
     }
 
+    // Balance des blancs (couleur de la lumiere) : en auto, la camera la calcule en Kelvin ; on la lira
+    // apres les photos. Si elle ne le permet pas, on la fixe et on calcule la couleur nous-memes.
+    long wmn = 0, wmx = 0, wstep, wdef = 0, wcaps = 0;
+    bool wbRange = false, wbFixed = false;
+    if (!amp) src->QueryInterface(IID_IAMVideoProcAmp, (void **)&amp);
+    if (amp) wbRange = SUCCEEDED(amp->GetRange(VideoProcAmp_WhiteBalance, &wmn, &wmx, &wstep, &wdef, &wcaps)) && wmx > wmn;
+    bool wbAuto = wbRange && (wcaps & VideoProcAmp_Flags_Auto) && wmn >= 1000 && wmx <= 15000;
+    if (wbAuto) amp->Set(VideoProcAmp_WhiteBalance, wdef, VideoProcAmp_Flags_Auto);
+    else if (wbRange && (wcaps & VideoProcAmp_Flags_Manual))
+        wbFixed = SUCCEEDED(amp->Set(VideoProcAmp_WhiteBalance, wdef, VideoProcAmp_Flags_Manual));
+
     bool ok = false;
     IMFSourceReader *reader = NULL;
     IMFAttributes *ra = NULL;
@@ -302,6 +349,17 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
             if (have) {
                 out->mean = st.mean;
                 out->lin = st.lin;
+                out->kelvin = -1;
+                long wv, wf;
+                if (wbAuto && SUCCEEDED(amp->Get(VideoProcAmp_WhiteBalance, &wv, &wf)) && wv >= 1500 && wv <= 15000) {
+                    out->kelvin = wv;                    // la camera a mesure la couleur de la lumiere
+                    out->kelvinFromCam = true;
+                } else if (st.r > 0 && st.g > 0 && st.b > 0) {
+                    // Image a balance des blancs fixe : on calcule la couleur moyenne de la piece
+                    double k = RgbToKelvin(st.r, st.g, st.b);
+                    if (wbFixed && wdef >= 2000 && wdef <= 10000) k *= wdef / 6500.0;
+                    if (k >= 1500 && k <= 15000) out->kelvin = k;
+                }
                 out->clip = st.dark > 0.6 || st.mean < 12 ? 1 : (st.bright > 0.4 || st.mean > 240 ? 2 : 0);
                 ok = true;
                 if (out->manual) { out->exp = e; out->hasExp = true; }
@@ -323,6 +381,7 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
     // On rend la camera en automatique pour les autres applications (Teams, Camera...)
     if (out->manual) cc->Set(CameraControl_Exposure, def, CameraControl_Flags_Auto);
     if (gainFixed) amp->Set(VideoProcAmp_Gain, gdef, VideoProcAmp_Flags_Auto);
+    if (wbFixed) amp->Set(VideoProcAmp_WhiteBalance, wdef, VideoProcAmp_Flags_Auto);
     if (amp) amp->Release();
     if (cc) cc->Release();
     src->Shutdown();

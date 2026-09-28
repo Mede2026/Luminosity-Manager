@@ -61,6 +61,10 @@ extern volatile LONG g_camExpMin, g_camExpMax, g_camExpStep, g_camLogUnits, g_ca
 extern volatile LONG g_camClip;                  // derniere photo : 0 ok, 1 trop sombre, 2 trop claire
 extern volatile LONG g_level;                    // position sur la courbe 0..1000
 extern volatile LONG g_applied, g_learnNow;      // luminosite voulue ; ajout appris a ce niveau
+extern volatile LONG g_trueTone, g_ttStrength;   // True Tone active ; intensite 0..100
+extern volatile LONG g_ambientK, g_displayK;     // couleur de la lumiere / du blanc de l'ecran (Kelvin)
+extern volatile LONG g_ttSource, g_ttOk;         // 1 capteur, 2 webcam, 3 heure ; 0 = Windows a refuse
+enum { TT_NONE, TT_SENSOR, TT_CAMERA, TT_SUN };
 
 // La courbe lumiere -> luminosite, et ce que l'app a appris de toi
 static const int CURVE_POINTS = 11, LEARN_POINTS = 5;
@@ -102,7 +106,7 @@ bool StartupEnabled();
 void SetStartup(bool on);
 
 // light.cpp : mesure de la lumiere
-bool SensorReadLux(double *lux, bool retryNow);
+bool SensorReadLux(double *lux, double *kelvin, bool retryNow);   // kelvin = -1 si inconnu
 void SensorClose();
 static const int THUMB_W = 64, THUMB_H = 48;
 struct CamShot {
@@ -111,6 +115,8 @@ struct CamShot {
     int clip;                  // 0 = bien exposee, 1 = trop sombre, 2 = trop claire
     bool hasExp, manual, logUnits;
     long exp, expDef, expMin, expMax, expStep;
+    double kelvin;             // couleur de la lumiere (Kelvin), -1 si inconnue
+    bool kelvinFromCam;        // mesuree par la balance des blancs de la camera
 };
 extern BYTE g_thumb[THUMB_W * THUMB_H];          // miniature en gris de la derniere photo
 extern volatile LONG g_thumbValid;
@@ -124,6 +130,8 @@ void BrightnessInit();
 int BrightnessGet();
 void BrightnessSet(int pct);
 void BrightnessShutdown();
+bool ColorApply(double r, double g, double b);     // True Tone : facteurs rouge / vert / bleu (0..1)
+void ColorReset();                                 // couleurs normales
 
 // net.cpp : internet (mises a jour, ville)
 extern wchar_t g_newVersion[32];

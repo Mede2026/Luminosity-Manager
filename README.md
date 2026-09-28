@@ -1,6 +1,6 @@
 # Luminosity Manager
 
-Application Windows légère (**~290 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
+Application Windows légère (**~300 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
 
 ## Utilisation
 1. Va dans **Releases** (à droite sur la page GitHub) et télécharge `LuminosityManager.exe`.
@@ -29,7 +29,8 @@ Application Windows légère (**~290 Ko**, aucune installation) qui ajuste **aut
 | Page | Contenu |
 |---|---|
 | **Accueil** | Jauge de luminosité, état (actif / désactivé / profil), miniature webcam, graphique 24 h (survole pour voir l'heure) |
-| **Luminosité** | Ajout −50 à +50 %, minimum / maximum, aperçu de ta courbe, démarrage Windows |
+| **Luminosité** | Ajout −50 à +50 %, minimum / maximum, ta courbe (« Tu es ici », points appris), démarrage Windows |
+| **True Tone** | Couleur de la pièce → blanc de l'écran, activer, intensité |
 | **Webcam** | Photo, clarté, lux estimés, choix de la caméra, intervalle, calibrer |
 | **Profils d'apps** | Luminosité fixe par application (ex. `LumaFusion.exe` → 100 %) |
 | **Raccourcis** | Clique puis appuie sur la nouvelle combinaison |
@@ -43,6 +44,13 @@ Interrupteur **Activé** toujours visible en bas à gauche.
 2. **Lissage** : plus clair = **vite** (pour lire tout de suite), plus sombre = **lentement** (une ombre qui passe n'assombrit pas l'écran). Petite zone morte (~12 % de lumière) pour éviter les micro-changements.
 3. **Transition douce** : petits pas toutes les 0,15 s au lieu de sauts.
 4. **Ajout** (curseur) : partout sur la courbe.
+
+## True Tone (comme sur iPhone)
+Le blanc de l'écran s'adapte à la **couleur** de la lumière de la pièce : plus chaud (jaune) sous des lampes, plus froid (bleu) en plein jour.
+- Couleur mesurée par : le **capteur de couleur** du PC s'il en a un, sinon la **balance des blancs de la webcam** (la caméra mesure la couleur en Kelvin à chaque photo), sinon **l'heure du jour**.
+- L'écran suit la pièce **sans la copier** (entre 4700 K et 7200 K), **très doucement** (~30 s).
+- Réglable : activer / désactiver, **intensité** (page True Tone).
+- Technique : table de couleurs de l'écran (gamma ramp), comme f.lux. Les couleurs normales reviennent quand l'app est désactivée ou fermée.
 
 ## Il apprend de toi
 Si tu changes la luminosité toi-même (touches Fn, Windows ou raccourcis), l'app **le retient pour ce niveau de lumière seulement** : régler dans le noir ne change pas le plein jour. La page Luminosité montre ta courbe, les points appris, et un bouton « Oublier ». Si un profil d'app est actif, c'est le profil qui est mis à jour.

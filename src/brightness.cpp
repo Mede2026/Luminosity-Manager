@@ -116,3 +116,34 @@ void BrightnessSet(int pct) { ApplyBrightness(g_svc, pct); }
 void BrightnessShutdown() {
     if (g_svc) { g_svc->Release(); g_svc = NULL; }
 }
+
+// ---------- Couleur de l'ecran (True Tone) ----------
+// On change la "table de couleurs" (gamma ramp) de chaque ecran : chaque canal rouge / vert / bleu
+// est multiplie par un facteur (0..1). Meme technique que f.lux.
+static WORD g_ramp[3][256];
+static int g_rampOk;
+
+static BOOL CALLBACK GammaMonitorProc(HMONITOR mon, HDC, LPRECT, LPARAM) {
+    MONITORINFOEXW mi;
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(mon, &mi)) return TRUE;
+    HDC dc = CreateDCW(L"DISPLAY", mi.szDevice, NULL, NULL);
+    if (!dc) return TRUE;
+    if (SetDeviceGammaRamp(dc, g_ramp)) g_rampOk++;
+    DeleteDC(dc);
+    return TRUE;
+}
+
+bool ColorApply(double r, double g, double b) {
+    const double k[3] = { r, g, b };
+    for (int c = 0; c < 3; c++)
+        for (int i = 0; i < 256; i++) {
+            double v = i * 257.0 * k[c];
+            g_ramp[c][i] = (WORD)(v > 65535 ? 65535 : v);
+        }
+    g_rampOk = 0;
+    EnumDisplayMonitors(NULL, NULL, GammaMonitorProc, 0);
+    return g_rampOk > 0;
+}
+
+void ColorReset() { ColorApply(1, 1, 1); }

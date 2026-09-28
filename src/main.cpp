@@ -35,6 +35,10 @@ volatile LONG g_level = -1;       // niveau de lumiere lisse 0..1000 (position s
 volatile LONG g_applied = -1;     // luminosite voulue (courbe + ajout + appris)
 volatile LONG g_learnNow = 0;     // ajout appris a ce niveau de lumiere
 double g_learn[LEARN_POINTS];     // ajouts appris a 0 %, 25 %, 50 %, 75 %, 100 % de la courbe
+volatile LONG g_trueTone = 1, g_ttStrength = 60;
+volatile LONG g_ambientK = -1, g_displayK = 6500;
+volatile LONG g_ttSource = TT_NONE, g_ttOk = 1;
+static double g_camKelvin = -1;   // couleur de la lumiere mesuree par la derniere photo
 wchar_t g_camChoice[128];
 volatile LONG g_lat = 4559, g_lon = -7344;   // Boucherville
 volatile LONG g_profilePct = -1;
@@ -227,7 +231,39 @@ void HistSave() {
     CloseHandle(f);
 }
 
-// ---------- Boucle de travail (fil separe) ----------
+// ---------- True Tone ----------
+// Couleur typique de la lumiere selon le soleil : lampes chaudes la nuit, lumiere du jour a midi
+static double SunKelvin(double e) {
+    static const double P[][2] = { { -6, 2900 }, { 0, 3600 }, { 15, 5500 }, { 40, 6500 } };
+    if (e <= P[0][0]) return P[0][1];
+    for (int i = 1; i < 4; i++)
+        if (e <= P[i][0]) return P[i - 1][1] + (P[i][1] - P[i - 1][1]) * (e - P[i - 1][0]) / (P[i][0] - P[i - 1][0]);
+    return 6500;
+}
+
+// Couleur d'un corps chauffe a k Kelvin (approximation de Tanner Helland), 0..1 par canal
+static void KelvinRgb(double k, double rgb[3]) {
+    double t = k / 100, r, g, b;
+    if (t <= 66) { r = 255; g = 99.4708025861 * log(t) - 161.1195681661; }
+    else { r = 329.698727446 * pow(t - 60, -0.1332047592); g = 288.1221695283 * pow(t - 60, -0.0755148492); }
+    if (t >= 66) b = 255;
+    else if (t <= 19) b = 0;
+    else b = 138.5177312231 * log(t - 10) - 305.0447927307;
+    double v[3] = { r, g, b };
+    for (int i = 0; i < 3; i++) rgb[i] = (v[i] < 0 ? 0 : v[i] > 255 ? 255 : v[i]) / 255;
+}
+
+// Blanc de l'ecran a k Kelvin : facteurs par rapport au blanc normal (6500 K), sans jamais depasser 1
+static bool ApplyDisplayKelvin(double k) {
+    double c[3], ref[3];
+    KelvinRgb(k, c);
+    KelvinRgb(6500, ref);
+    double f[3], mx = 0;
+    for (int i = 0; i < 3; i++) { f[i] = c[i] / ref[i]; if (f[i] > mx) mx = f[i]; }
+    for (int i = 0; i < 3; i++) f[i] /= mx;
+    return ColorApply(f[0], f[1], f[2]);
+}
+
 static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 // ---------- La courbe : lumiere de la piece (lux) -> position 0..1 ----------
@@ -316,6 +352,7 @@ static bool CameraLux(bool calibrate, double *lux) {
     }
     g_camLevel = shot.mean;
     g_camQuality = shot.manual ? 0 : (shot.hasExp ? 1 : 2);
+    g_camKelvin = shot.kelvin;
     *lux = 300.0 * scene / g_camRef;
     return true;
 }
@@ -344,6 +381,10 @@ DWORD WINAPI Worker(LPVOID) {
     int camTimer = 0;
     LONG lastHistMinute = 0;
     DWORD lastTick = 0;
+    double ambMired = -1;    // couleur de la piece lissee (en "mired" = 1 000 000 / Kelvin, comme l'oeil la percoit)
+    double dispMired = 1e6 / 6500, appliedMired = 1e6 / 6500;
+    bool colorChanged = false;
+    DWORD lastColorApply = 0;
     HANDLE evs[2] = { g_quitEvent, g_wakeEvent };
 
     for (;;) {
@@ -359,6 +400,7 @@ DWORD WINAPI Worker(LPVOID) {
 
             // App desactivee : on ne touche a rien (sauf les raccourcis +/-), pas de camera
             if (!g_enabled) {
+                if (colorChanged) { ColorReset(); colorChanged = false; dispMired = appliedMired = 1e6 / 6500; g_displayK = 6500; }
                 if (nudge && current >= 0) { current = Clamp(current + nudge, 1, 100); BrightnessSet(current); }
                 else if (actual >= 0) current = actual;
                 expectRead = -2;
@@ -370,8 +412,8 @@ DWORD WINAPI Worker(LPVOID) {
             }
 
             // 1) Mesurer la lumiere (lux)
-            double lux = -1;
-            if (SensorReadLux(&lux, force || first)) {
+            double lux = -1, sensorK = -1;
+            if (SensorReadLux(&lux, &sensorK, force || first)) {
                 g_source = SRC_SENSOR;
                 g_lastMeasure = (LONG)GetTickCount();
             } else {
@@ -468,7 +510,41 @@ DWORD WINAPI Worker(LPVOID) {
                 expectRead = r >= 0 ? r : -2;
             }
 
-            // 5) Historique : un point par minute
+            // 5) True Tone : la couleur du blanc de l'ecran suit (en partie) la couleur de la lumiere
+            double ambK = -1;
+            int ttSrc = TT_NONE;
+            if (g_source == SRC_SENSOR && sensorK > 0) { ambK = sensorK; ttSrc = TT_SENSOR; }
+            else if (g_source == SRC_CAMERA && g_camKelvin > 0) { ambK = g_camKelvin; ttSrc = TT_CAMERA; }
+            else { ambK = SunKelvin(SunElevation(g_lat / 100.0, g_lon / 100.0)); ttSrc = TT_SUN; }
+            g_ttSource = ttSrc;
+            double mAmb = 1e6 / ambK;
+            // tres lent, comme sur iOS (environ 30 s pour suivre un changement)
+            ambMired = (ambMired < 0 || force || calib) ? mAmb : ambMired + (mAmb - ambMired) * 0.08;
+            g_ambientK = (LONG)lround(1e6 / ambMired);
+            if (g_trueTone) {
+                const double m6500 = 1e6 / 6500;
+                // l'ecran va vers la couleur de la piece, sans la copier (70 % max, entre 4700 K et 7200 K)
+                double targetM = m6500 + (ambMired - m6500) * (g_ttStrength / 100.0) * 0.7;
+                if (targetM > 1e6 / 4700) targetM = 1e6 / 4700;
+                if (targetM < 1e6 / 7200) targetM = 1e6 / 7200;
+                dispMired += (targetM - dispMired) * ((force || calib) ? 1.0 : 0.12);
+                g_displayK = (LONG)lround(1e6 / dispMired);
+                // on reapplique si ca a change, ou toutes les 10 s (Windows remet parfois les couleurs a zero)
+                bool moved = fabs(dispMired - appliedMired) > 0.3;
+                if (moved || (colorChanged && GetTickCount() - lastColorApply >= 10000)) {
+                    g_ttOk = ApplyDisplayKelvin(1e6 / dispMired);
+                    colorChanged = true;
+                    appliedMired = dispMired;
+                    lastColorApply = GetTickCount();
+                }
+            } else if (colorChanged) {
+                ColorReset();
+                colorChanged = false;
+                dispMired = appliedMired = 1e6 / 6500;
+                g_displayK = 6500;
+            }
+
+            // 6) Historique : un point par minute
             LONG m = NowMinute();
             if (m != lastHistMinute) {
                 lastHistMinute = m;
@@ -478,7 +554,7 @@ DWORD WINAPI Worker(LPVOID) {
             PostMessageW(g_hwnd, WM_UPDATE, 0, 0);
         }
 
-        // 6) Transition douce : petits pas toutes les 0,15 s (plus rapide si l'ecart est grand)
+        // 7) Transition douce : petits pas toutes les 0,15 s (plus rapide si l'ecart est grand)
         if (target >= 0 && current >= 0 && current != target) {
             int diff = target - current;
             int step = Clamp(abs(diff) / 3, 1, 4);
@@ -494,6 +570,7 @@ DWORD WINAPI Worker(LPVOID) {
         if (WaitForMultipleObjects(2, evs, FALSE, wait) == WAIT_OBJECT_0) break;
     }
 
+    if (colorChanged) ColorReset();                  // couleurs normales en quittant
     SensorClose();
     BrightnessShutdown();
     MFShutdown();
@@ -540,6 +617,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     DWORD ref = RegGet(L"CamRefLin", 0);                 // reference de calibration (lumiere reelle x 1e6)
     if (ref >= 50 && ref < 100000000) g_camRef = ref / 1000000.0;
     g_camLocked = RegGet(L"CamLocked", 0) ? 1 : 0;
+    g_trueTone = RegGet(L"TrueTone", 1) ? 1 : 0;
+    g_ttStrength = (LONG)RegGet(L"TrueToneStrength", 60);
+    if (g_ttStrength < 0 || g_ttStrength > 100) g_ttStrength = 60;
     g_camLockValue = (LONG)RegGet(L"CamLockValue", (DWORD)LONG_MIN);
     for (int i = 0; i < LEARN_POINTS; i++) {
         wchar_t name[16];

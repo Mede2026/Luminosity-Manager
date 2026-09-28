@@ -19,6 +19,7 @@
     <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.3"/></symbol>
     <symbol id="i-update" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4.5h-4.5"/></symbol>
     <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v8M7 6.3a7.5 7.5 0 1 0 10 0"/></symbol>
+    <symbol id="i-tone" viewBox="0 0 24 24"><path d="M10 13.8V5.2a2 2 0 0 1 4 0v8.6a4.2 4.2 0 1 1-4 0z"/><circle cx="12" cy="17.3" r="1.6" class="fill"/><path d="M17 6h2.5M17 9.5h2.5"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l1 13h9l1-13"/></symbol>
   </defs>
 </svg>
@@ -32,6 +33,7 @@
     </div>
     <a class="nav active" data-page="home"><svg><use href="#i-home"/></svg>Accueil</a>
     <a class="nav" data-page="brightness"><svg><use href="#i-bright"/></svg>Luminosité</a>
+    <a class="nav" data-page="truetone"><svg><use href="#i-tone"/></svg>True Tone</a>
     <a class="nav" data-page="camera"><svg><use href="#i-cam"/></svg>Webcam</a>
     <a class="nav" data-page="profiles"><svg><use href="#i-apps"/></svg>Profils d'apps</a>
     <a class="nav" data-page="keys"><svg><use href="#i-key"/></svg>Raccourcis</a>
@@ -65,6 +67,7 @@
           <div class="facts">
             <div class="fact"><span>Source</span><b id="source">—</b></div>
             <div class="fact"><span>Lumière</span><b id="light">—</b></div>
+            <div class="fact"><span>True Tone</span><b id="tt-home">—</b></div>
             <div class="fact wide"><span>Courbe + ajouts → écran</span><b id="calc">—</b></div>
           </div>
           <div class="actions">
@@ -127,6 +130,39 @@
           <div class="row-ctl"><input type="checkbox" class="switch" id="startup"></div>
         </div>
       </div>
+    </section>
+
+    <!-- TRUE TONE -->
+    <section class="page" id="page-truetone">
+      <h1>True Tone</h1>
+      <p class="intro">Comme sur iPhone : le blanc de l'écran s'adapte à la couleur de la lumière de la pièce. Plus chaud (jaune) sous des lampes, plus froid (bleu) en plein jour. Les couleurs paraissent plus naturelles et c'est plus doux pour les yeux.</p>
+      <div class="card tt-card">
+        <div class="tt-swatches">
+          <div class="tt-item"><div class="tt-swatch" id="tt-amb-sw"></div><span>Lumière de la pièce</span><b id="tt-amb">—</b><small id="tt-amb-name"></small></div>
+          <div class="tt-arrow">→</div>
+          <div class="tt-item"><div class="tt-swatch" id="tt-disp-sw"></div><span>Blanc de l'écran</span><b id="tt-disp">—</b><small id="tt-disp-name"></small></div>
+        </div>
+        <div class="tt-scale">
+          <div class="tt-bar"></div>
+          <i class="tt-mark amb" id="tt-mark-amb" title="Pièce"></i>
+          <i class="tt-mark disp" id="tt-mark-disp" title="Écran"></i>
+          <div class="tt-labels"><span>2500 K · bougie</span><span>4000 K · lampe</span><span>6500 K · jour</span><span>8000 K · ciel</span></div>
+        </div>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>True Tone</b><small>Change la couleur de l'écran tout doucement (environ 30 secondes), pour que tu ne le remarques pas.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="trueTone"></div>
+        </div>
+        <div class="row" id="tt-strength-row">
+          <div class="row-text"><b>Intensité</b><small>À quel point l'écran suit la couleur de la pièce.</small></div>
+          <div class="row-ctl slider-ctl"><input type="range" id="ttStrength" min="0" max="100" step="5"><output id="ttStrength-val">60 %</output></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Mesure de la couleur</b><small id="tt-source">—</small></div>
+        </div>
+      </div>
+      <p class="intro small-note" id="tt-note">Si la « Veilleuse » de Windows est activée, elle s'ajoute à True Tone. Pour le vrai effet True Tone, tu peux la désactiver.</p>
     </section>
 
     <!-- WEBCAM -->

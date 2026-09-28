@@ -52,6 +52,19 @@ function curveT(lux) {
   }
   return 1;
 }
+// Couleur d'une lumiere a k Kelvin (meme formule que le programme), pour les pastilles
+function kelvinRgb(k) {
+  const t = k / 100;
+  let r, g, b;
+  if (t <= 66) { r = 255; g = 99.4708025861 * Math.log(t) - 161.1195681661; }
+  else { r = 329.698727446 * Math.pow(t - 60, -0.1332047592); g = 288.1221695283 * Math.pow(t - 60, -0.0755148492); }
+  b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+  const c = (v) => Math.round(Math.max(0, Math.min(255, v)));
+  return `rgb(${c(r)}, ${c(g)}, ${c(b)})`;
+}
+const kelvinName = (k) => k < 3300 ? 'très chaude' : k < 4500 ? 'chaude' : k < 5800 ? 'neutre' : k < 7000 ? 'lumière du jour' : 'froide';
+const kelvinPos = (k) => Math.max(0, Math.min(100, ((k - 2500) / (8000 - 2500)) * 100)) + '%';
+
 function learnAt(learn, t) {
   if (!learn || !learn.length) return 0;
   const pos = t * (learn.length - 1), i = Math.floor(pos);
@@ -164,6 +177,29 @@ function renderState() {
     q.className = 'quality ' + cls;
     q.textContent = (s.camUsed ? s.camUsed + ' · ' : '') + txt;
   }
+
+  // True Tone
+  $('tt-home').textContent = !s.trueTone ? 'désactivé' : s.displayK + ' K';
+  $('trueTone').checked = s.trueTone;
+  if (document.activeElement !== $('ttStrength')) { setRange($('ttStrength'), s.ttStrength); $('ttStrength-val').textContent = s.ttStrength + ' %'; }
+  $('tt-strength-row').classList.toggle('disabled', !s.trueTone);
+  if (s.ambientK > 0) {
+    $('tt-amb').textContent = s.ambientK + ' K';
+    $('tt-amb-name').textContent = kelvinName(s.ambientK);
+    $('tt-amb-sw').style.background = kelvinRgb(s.ambientK);
+    $('tt-mark-amb').style.left = kelvinPos(s.ambientK);
+  }
+  const dk = s.trueTone ? s.displayK : 6500;
+  $('tt-disp').textContent = dk + ' K';
+  $('tt-disp-name').textContent = s.trueTone ? kelvinName(dk) : 'normal (True Tone désactivé)';
+  $('tt-disp-sw').style.background = kelvinRgb(dk);
+  $('tt-mark-disp').style.left = kelvinPos(dk);
+  $('tt-source').textContent = ['—', 'Capteur de couleur du PC : mesure précise.',
+    'Balance des blancs de la webcam : la caméra mesure la couleur de la lumière à chaque photo.',
+    'Heure du jour et soleil : pas de capteur de couleur ni de webcam disponible.'][s.ttSource] || '—';
+  const note = $('tt-note');
+  if (s.trueTone && !s.ttOk) { note.className = 'intro small-note warn-text'; note.textContent = 'Windows a refusé de changer les couleurs de cet écran (certains pilotes ou écrans le bloquent).'; }
+  else { note.className = 'intro small-note'; note.textContent = 'Si la « Veilleuse » de Windows est activée, elle s\'ajoute à True Tone. Pour le vrai effet True Tone, tu peux la désactiver.'; }
 
   // Ce que l'app a appris
   const learned = (s.learn || []).some((v) => Math.abs(v) >= 0.5);
@@ -460,6 +496,16 @@ $('camLocked').onchange = (e) => send('setCamLocked', { value: e.target.checked 
 $('camExp').oninput = (e) => { setRange(e.target, +e.target.value); $('camExp-val').textContent = fmtExp(+e.target.value, state.camLogUnits); };
 $('camExp').onchange = (e) => { send('setCamExposure', { value: +e.target.value }); toast('Nouvelle photo avec cette exposition…'); };
 $('btn-forget').onclick = () => send('resetLearning');
+$('trueTone').onchange = (e) => send('setTrueTone', { value: e.target.checked ? 1 : 0 });
+$('ttStrength').oninput = (e) => { setRange(e.target, +e.target.value); $('ttStrength-val').textContent = e.target.value + ' %'; };
+$('ttStrength').onchange = (e) => send('setTTStrength', { value: +e.target.value });
+// Reperes de l'echelle True Tone places a leur vraie position
+document.querySelectorAll('.tt-labels span').forEach((sp) => {
+  const k = parseInt(sp.textContent, 10);
+  sp.style.position = 'absolute';
+  sp.style.left = kelvinPos(k);
+  sp.style.transform = k <= 2500 ? 'none' : k >= 8000 ? 'translateX(-100%)' : 'translateX(-50%)';
+});
 
 $('p-pct').oninput = (e) => { setRange(e.target, +e.target.value); $('p-pct-val').textContent = e.target.value + ' %'; };
 $('btn-pick').onclick = () => send('pickApp');
@@ -607,7 +653,7 @@ function demo() {
   const tick = () => {
     onMessage({ type: 'state', enabled: true, bright: 72, lux: 340, source: 'camera', sunElev: 12, detected: 67, offset: 5,
       min: 10, max: 100, applied: 72, learnNow: 0, level: 0.6, learn: [8, 3, 0, 0, 0], camLocked: false, camLockValue: -6,
-      camExposure: -6, camExpMin: -11, camExpMax: -2, camExpStep: 1, camLogUnits: true, camManualOk: true, camClip: 0, ago: ago++ % 30, camNext: 30 - (ago % 30), useCam: true, camInterval: 30, camQuality: 0,
+      camExposure: -6, camExpMin: -11, camExpMax: -2, camExpStep: 1, camLogUnits: true, camManualOk: true, camClip: 0, trueTone: true, ttStrength: 60, ambientK: 3400, displayK: 5300, ttSource: 2, ttOk: true, ago: ago++ % 30, camNext: 30 - (ago % 30), useCam: true, camInterval: 30, camQuality: 0,
       camLevel: 46, startup: true, updateCheck: true, lat: 45.59, lon: -73.44, camUsed: 'Integrated Camera', profileApp: '', profilePct: -1 });
   };
   tick();

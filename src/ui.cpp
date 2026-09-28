@@ -143,6 +143,12 @@ static void SendState() {
     j.Bool(L"camLogUnits", g_camLogUnits);
     j.Bool(L"camManualOk", g_camManualOk);
     j.Num(L"camClip", g_camClip);
+    j.Bool(L"trueTone", g_trueTone);
+    j.Num(L"ttStrength", g_ttStrength);
+    j.Num(L"ambientK", g_ambientK);
+    j.Num(L"displayK", g_displayK);
+    j.Num(L"ttSource", g_ttSource);
+    j.Bool(L"ttOk", g_ttOk);
     j.Num(L"ago", g_lastMeasure ? (double)((GetTickCount() - (DWORD)g_lastMeasure) / 1000) : -1);
     j.Num(L"camNext", g_camNext);
     j.Bool(L"useCam", g_useCam);
@@ -498,6 +504,18 @@ void OnPageMessage(const char *json) {
         g_camLockValue = value;
         RegPut(L"CamLockValue", (DWORD)value);
         g_remeasure = 1;                         // nouvelle photo avec cette exposition
+        SetEvent(g_wakeEvent);
+        SendState();
+    }
+    else if (!wcscmp(cmd, L"setTrueTone")) {
+        g_trueTone = value != 0;
+        RegPut(L"TrueTone", g_trueTone);
+        SetEvent(g_wakeEvent);
+        SendState();
+    }
+    else if (!wcscmp(cmd, L"setTTStrength")) {
+        g_ttStrength = Clamp(value, 0, 100);
+        RegPut(L"TrueToneStrength", g_ttStrength);
         SetEvent(g_wakeEvent);
         SendState();
     }
