@@ -11,9 +11,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Version de Linux fixee : pas de surprise quand "ubuntu-latest" change
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Installer MinGW-w64
         run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
       - name: Lire la version
@@ -21,14 +22,20 @@ jobs:
       - name: Compiler
         run: ./build.sh
       - name: Publier la Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
-          name: Luminosity Manager ${{ env.VERSION }}
-          files: LuminosityManager.exe
-          body: |
-            Télécharge **LuminosityManager.exe** ci-dessous et double-clique dessus. Aucune installation.
-            Si une version précédente est déjà installée, elle se met à jour toute seule (onglet « Plus »).
+        # Outil officiel "gh" (deja installe) : pas d'action externe a tenir a jour
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Télécharge **LuminosityManager.exe** ci-dessous et double-clique dessus. Aucune installation.
+          Si une version précédente est déjà installée, elle se met à jour toute seule (page « Mises à jour »).
 
-            Nouveautés et mode d'emploi : voir le [README](https://github.com/${{ github.repository }}#readme).
+          Nouveautés et mode d'emploi : voir le [README](https://github.com/${{ github.repository }}#readme).
+          EOF
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            # la Release existe deja (relance) : on remplace juste le .exe
+            gh release upload "v$VERSION" LuminosityManager.exe --clobber
+          else
+            gh release create "v$VERSION" LuminosityManager.exe --target "$GITHUB_SHA" \
+              --title "Luminosity Manager $VERSION" --notes-file notes.md
+          fi
