@@ -1,0 +1,32 @@
+name: Release
+
+# Pousser un tag (ex. v0.1) compile LuminosityManager.exe et publie une Release GitHub.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
+      - name: Compiler
+        run: ./build.sh
+      - name: Publier la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Luminosity Manager ${{ github.ref_name }}
+          files: LuminosityManager.exe
+          body: |
+            Télécharge **LuminosityManager.exe** ci-dessous et double-clique dessus. Aucune installation.
+
+            - Mesure la lumière : capteur, sinon webcam, sinon position du soleil
+            - Fenêtre de réglages + icône près de l'horloge
+            - Bouton « Mesurer maintenant et ajuster »
+            - Ajout réglable (−50 % à +50 %) à la luminosité détectée
+            - Intervalle des photos webcam réglable (5 s à 1 h)

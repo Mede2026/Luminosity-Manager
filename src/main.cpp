@@ -1,5 +1,5 @@
 // Luminosity Manager - ajuste la luminosite de l'ecran selon la lumiere ambiante.
-// Win32 natif, sans dependances, icone dans la zone de notification uniquement.
+// Win32 natif, sans dependances, fenetre de reglages + icone dans la zone de notification.
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -10,6 +10,7 @@
 #include <initguid.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <commctrl.h>
 #include <objbase.h>
 #include <propkeydef.h>
 #include <sensorsapi.h>
@@ -28,14 +29,18 @@
 #define WM_UPDATE (WM_APP + 2)
 #define WM_NOSENSOR (WM_APP + 3)
 
-enum { ID_INFO = 100, ID_AUTO, ID_BRIGHTER, ID_DARKER, ID_RESET, ID_STARTUP, ID_CAMERA, ID_QUIT };
+enum { ID_INFO = 100, ID_AUTO, ID_BRIGHTER, ID_DARKER, ID_RESET, ID_STARTUP, ID_CAMERA, ID_QUIT,
+       ID_OPEN, ID_HIDE, ID_MEASURE, ID_OFFSET, ID_INTERVAL, ID_SPIN,
+       ID_S_SOURCE, ID_S_MEASURE, ID_S_BRIGHT, ID_PROGRESS, ID_S_OFFSET, ID_S_NEXT, ID_S_DETECTED };
 
 static const wchar_t *APP_NAME = L"Luminosity Manager";
+static const wchar_t *APP_VERSION = L"0.1";
 static const wchar_t *REG_KEY  = L"Software\\LuminosityManager";
 static const wchar_t *RUN_KEY  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 static const int MIN_BRIGHT = 10, MAX_BRIGHT = 100;
 static const int STEP = 5, HYSTERESIS = 3;
+static const int MIN_INTERVAL = 5, MAX_INTERVAL = 3600;   // secondes entre 2 photos webcam
 
 static HWND g_hwnd;
 static NOTIFYICONDATAW g_nid;
@@ -46,11 +51,16 @@ static volatile LONG g_enabled = 1;
 static volatile LONG g_offset = 0;       // -50..+50
 static volatile LONG g_lux = -1;         // -1 = pas de capteur
 static volatile LONG g_bright = -1;      // luminosite actuelle appliquee
+static volatile LONG g_detected = -1;    // luminosite calculee depuis la lumiere (avant l'ajout)
 enum { SRC_SENSOR, SRC_CAMERA, SRC_SUN };
 static volatile LONG g_source = SRC_SUN;
 static volatile LONG g_useCam = 1;
 static volatile LONG g_camLevel = 0;     // 0..255
 static volatile LONG g_sunElev = 0;      // degres
+static volatile LONG g_camInterval = 30; // secondes entre 2 photos webcam
+static volatile LONG g_camNext = 0;      // secondes avant la prochaine photo
+static volatile LONG g_remeasure = 0;    // 1 = reprendre une photo tout de suite
+static volatile LONG g_force = 0;        // 1 = mesurer et ajuster immediatement
 static LONG g_lat = 4559, g_lon = -7344; // Boucherville (x100)
 
 // ---------- Reglages (registre) ----------
@@ -74,9 +84,9 @@ static void SetStartup(bool on) {
     HKEY k;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &k) != ERROR_SUCCESS) return;
     if (on) {
-        wchar_t path[MAX_PATH], cmd[MAX_PATH + 4];
+        wchar_t path[MAX_PATH], cmd[MAX_PATH + 16];
         GetModuleFileNameW(NULL, path, MAX_PATH);
-        swprintf(cmd, MAX_PATH + 4, L"\"%ls\"", path);
+        swprintf(cmd, MAX_PATH + 16, L"\"%ls\" --tray", path);
         RegSetValueExW(k, APP_NAME, 0, REG_SZ, (BYTE *)cmd, (DWORD)((wcslen(cmd) + 1) * sizeof(wchar_t)));
     } else {
         RegDeleteValueW(k, APP_NAME);
@@ -331,7 +341,9 @@ static DWORD WINAPI Worker(LPVOID) {
     HANDLE evs[2] = { g_quitEvent, g_wakeEvent };
 
     for (;;) {
-        if (!sensor && ++retry >= 15) { retry = 0; sensor = OpenLightSensor(); }
+        bool force = InterlockedExchange(&g_force, 0) != 0;
+        if (force) g_remeasure = 1;
+        if (!sensor && (force || ++retry >= 15)) { retry = 0; sensor = OpenLightSensor(); }
 
         double level = -1;
         double lux;
@@ -343,8 +355,10 @@ static DWORD WINAPI Worker(LPVOID) {
             if (sensor) { sensor->Release(); sensor = NULL; }
             g_lux = -1;
             if (g_useCam) {
-                if (--camTimer <= 0 || g_source != SRC_CAMERA) {
-                    camTimer = 30;                       // une mesure toutes les 30 s
+                if (camTimer > g_camInterval) camTimer = g_camInterval;   // intervalle raccourci
+                if (g_remeasure || --camTimer <= 0 || g_source != SRC_CAMERA) {
+                    g_remeasure = 0;
+                    camTimer = g_camInterval;            // une photo toutes les N secondes
                     int y = WebcamLevel();
                     if (y >= 0) { g_camLevel = y; g_source = SRC_CAMERA; }
                     else g_source = SRC_SUN;
@@ -352,6 +366,7 @@ static DWORD WINAPI Worker(LPVOID) {
             } else {
                 g_source = SRC_SUN;
             }
+            g_camNext = camTimer;
             if (g_source == SRC_CAMERA) level = sqrt(g_camLevel / 200.0);
             else {
                 double e = SunElevation(g_lat / 100.0, g_lon / 100.0);
@@ -363,7 +378,16 @@ static DWORD WINAPI Worker(LPVOID) {
 
         if (level >= 0) {
             if (level > 1) level = 1;
-            smooth = smooth < 0 ? level : smooth * 0.7 + level * 0.3;
+            smooth = (smooth < 0 || force) ? level : smooth * 0.7 + level * 0.3;
+        }
+
+        if (smooth >= 0) g_detected = LevelToPercent(smooth);
+
+        if (force && smooth >= 0) {                      // ajustement immediat, sans transition
+            int target = LevelToPercent(smooth) + g_offset;
+            current = target < 1 ? 1 : (target > 100 ? 100 : target);
+            moving = false;
+            ApplyBrightness(svc, current);
         }
 
         if (g_enabled && smooth >= 0) {
@@ -388,9 +412,7 @@ static DWORD WINAPI Worker(LPVOID) {
         g_bright = current;
         PostMessageW(g_hwnd, WM_UPDATE, 0, 0);
 
-        DWORD w = WaitForMultipleObjects(2, evs, FALSE, 1000);
-        if (w == WAIT_OBJECT_0) break;
-        if (w == WAIT_OBJECT_0 + 1) camTimer = 0;       // reglage change : remesurer
+        if (WaitForMultipleObjects(2, evs, FALSE, 1000) == WAIT_OBJECT_0) break;
     }
 
     if (sensor) sensor->Release();
@@ -400,20 +422,29 @@ static DWORD WINAPI Worker(LPVOID) {
     return 0;
 }
 
-// ---------- Icone de notification ----------
-static void DescribeSource(wchar_t *out, int n) {
-    if (g_source == SRC_SENSOR)
-        swprintf(out, n, L"Capteur : %ld lux", (long)g_lux);
-    else if (g_source == SRC_CAMERA)
-        swprintf(out, n, L"Webcam : lumière %ld %%", (long)(g_camLevel * 100 / 255));
-    else
-        swprintf(out, n, L"Soleil : %+ld° au-dessus de l'horizon", (long)g_sunElev);
+// ---------- Textes d'etat ----------
+static void SourceName(wchar_t *out, int n) {
+    if (g_source == SRC_SENSOR)      wcsncpy(out, L"Capteur de lumière", n);
+    else if (g_source == SRC_CAMERA) wcsncpy(out, L"Webcam", n);
+    else                             wcsncpy(out, L"Soleil (heure du jour)", n);
 }
 
+static void MeasureText(wchar_t *out, int n) {
+    if (g_source == SRC_SENSOR)
+        swprintf(out, n, L"%ld lux", (long)g_lux);
+    else if (g_source == SRC_CAMERA)
+        swprintf(out, n, L"Clarté de l'image : %ld %%", (long)(g_camLevel * 100 / 255));
+    else
+        swprintf(out, n, L"Soleil à %+ld° de l'horizon", (long)g_sunElev);
+}
+
+// ---------- Icone de notification ----------
 static void UpdateTip() {
-    wchar_t src[80];
-    DescribeSource(src, 80);
-    swprintf(g_nid.szTip, 128, L"%ls\n%ls\nÉcran : %ld %%", APP_NAME, src, g_bright < 0 ? 0L : (long)g_bright);
+    wchar_t src[48], mes[64];
+    SourceName(src, 48);
+    MeasureText(mes, 64);
+    swprintf(g_nid.szTip, 128, L"%ls\n%ls : %ls\nÉcran : %ld %%", APP_NAME, src, mes,
+             g_bright < 0 ? 0L : (long)g_bright);
     g_nid.uFlags = NIF_TIP;
     Shell_NotifyIconW(NIM_MODIFY, &g_nid);
 }
@@ -424,23 +455,16 @@ static void AddTrayIcon() {
 }
 
 static void ShowMenu() {
-    wchar_t src[80], info[128];
-    DescribeSource(src, 80);
-    swprintf(info, 128, L"%ls  —  Écran : %ld %%", src, g_bright < 0 ? 0L : (long)g_bright);
-    wchar_t off[64];
-    swprintf(off, 64, L"Réinitialiser le réglage (actuel : %+ld %%)", (long)g_offset);
-
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING | MF_GRAYED, ID_INFO, info);
+    AppendMenuW(m, MF_STRING, ID_OPEN, L"Ouvrir Luminosity Manager");
+    AppendMenuW(m, MF_STRING, ID_MEASURE, L"Mesurer maintenant");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING | (g_enabled ? MF_CHECKED : 0), ID_AUTO, L"Adaptation automatique");
-    AppendMenuW(m, MF_STRING, ID_BRIGHTER, L"Plus clair (+10 %)");
-    AppendMenuW(m, MF_STRING, ID_DARKER, L"Plus sombre (−10 %)");
-    AppendMenuW(m, MF_STRING | (g_offset ? 0 : MF_GRAYED), ID_RESET, off);
+    AppendMenuW(m, MF_STRING, ID_BRIGHTER, L"Ajouter 10 % (plus clair)");
+    AppendMenuW(m, MF_STRING, ID_DARKER, L"Enlever 10 % (plus sombre)");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(m, MF_STRING | (g_useCam ? MF_CHECKED : 0), ID_CAMERA, L"Utiliser la webcam si pas de capteur");
-    AppendMenuW(m, MF_STRING | (StartupEnabled() ? MF_CHECKED : 0), ID_STARTUP, L"Lancer au démarrage de Windows");
     AppendMenuW(m, MF_STRING, ID_QUIT, L"Quitter");
+    SetMenuDefaultItem(m, ID_OPEN, FALSE);
 
     POINT p;
     GetCursorPos(&p);
@@ -450,42 +474,187 @@ static void ShowMenu() {
     DestroyMenu(m);
 }
 
-static void ChangeOffset(LONG delta) {
-    LONG o = delta == 0 ? 0 : g_offset + delta;
+// ---------- Fenetre ----------
+static HFONT g_font;
+static int g_dpi = 96;
+static int S(int v) { return MulDiv(v, g_dpi, 96); }
+
+static HWND Ctl(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id) {
+    HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h),
+                             g_hwnd, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)g_font, FALSE);
+    return c;
+}
+
+static void SetTextIfChanged(int id, const wchar_t *text) {
+    wchar_t old[128];
+    GetDlgItemTextW(g_hwnd, id, old, 128);
+    if (wcscmp(old, text) != 0) SetDlgItemTextW(g_hwnd, id, text);
+}
+
+static void RefreshStatus() {
+    wchar_t buf[128];
+    SourceName(buf, 128);
+    SetTextIfChanged(ID_S_SOURCE, buf);
+    MeasureText(buf, 128);
+    SetTextIfChanged(ID_S_MEASURE, buf);
+    long b = g_bright < 0 ? 0 : g_bright;
+    swprintf(buf, 128, L"%ld %%", b);
+    SetTextIfChanged(ID_S_BRIGHT, buf);
+    if (g_detected < 0) wcscpy(buf, L"—");
+    else {
+        long applied = g_detected + g_offset;
+        applied = applied < 1 ? 1 : (applied > 100 ? 100 : applied);
+        swprintf(buf, 128, L"%ld %%  %+ld %%  →  %ld %%", (long)g_detected, (long)g_offset, applied);
+    }
+    SetTextIfChanged(ID_S_DETECTED, buf);
+    SendDlgItemMessageW(g_hwnd, ID_PROGRESS, PBM_SETPOS, b, 0);
+    if (g_source == SRC_CAMERA)
+        swprintf(buf, 128, L"Prochaine photo dans %ld s", (long)g_camNext);
+    else if (g_source == SRC_SENSOR)
+        wcscpy(buf, L"Capteur détecté : la webcam n'est pas utilisée");
+    else if (g_useCam)
+        wcscpy(buf, L"Aucune webcam trouvée");
+    else
+        wcscpy(buf, L"Webcam désactivée");
+    SetTextIfChanged(ID_S_NEXT, buf);
+}
+
+static void SyncControls() {
+    CheckDlgButton(g_hwnd, ID_AUTO, g_enabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(g_hwnd, ID_CAMERA, g_useCam ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(g_hwnd, ID_STARTUP, StartupEnabled() ? BST_CHECKED : BST_UNCHECKED);
+    SendDlgItemMessageW(g_hwnd, ID_OFFSET, TBM_SETPOS, TRUE, g_offset);
+    wchar_t buf[16];
+    swprintf(buf, 16, L"%+ld %%", (long)g_offset);
+    SetTextIfChanged(ID_S_OFFSET, buf);
+    if (IsWindowVisible(g_hwnd)) RefreshStatus();
+    EnableWindow(GetDlgItem(g_hwnd, ID_INTERVAL), g_useCam);
+    EnableWindow(GetDlgItem(g_hwnd, ID_SPIN), g_useCam);
+}
+
+static void CreateControls() {
+    NONCLIENTMETRICSW ncm = {};
+    ncm.cbSize = sizeof(ncm);
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+    g_font = CreateFontIndirectW(&ncm.lfMessageFont);
+
+    Ctl(L"BUTTON", L"État", BS_GROUPBOX, 10, 8, 360, 128, 0);
+    Ctl(L"STATIC", L"Source :", 0, 24, 32, 130, 18, 0);
+    Ctl(L"STATIC", L"", SS_NOPREFIX, 160, 32, 200, 18, ID_S_SOURCE);
+    Ctl(L"STATIC", L"Mesure :", 0, 24, 56, 130, 18, 0);
+    Ctl(L"STATIC", L"", SS_NOPREFIX, 160, 56, 200, 18, ID_S_MEASURE);
+    Ctl(L"STATIC", L"Luminosité détectée :", 0, 24, 80, 135, 18, 0);
+    Ctl(L"STATIC", L"", SS_NOPREFIX, 160, 80, 200, 18, ID_S_DETECTED);
+    Ctl(L"STATIC", L"Luminosité de l'écran :", 0, 24, 104, 135, 18, 0);
+    HWND pb = Ctl(PROGRESS_CLASSW, L"", 0, 160, 105, 150, 14, ID_PROGRESS);
+    SendMessageW(pb, PBM_SETRANGE32, 0, 100);
+    Ctl(L"STATIC", L"", SS_RIGHT, 314, 104, 44, 18, ID_S_BRIGHT);
+
+    Ctl(L"BUTTON", L"Mesurer maintenant et ajuster", BS_PUSHBUTTON | WS_TABSTOP, 10, 144, 360, 30, ID_MEASURE);
+
+    Ctl(L"BUTTON", L"Réglages", BS_GROUPBOX, 10, 182, 360, 196, 0);
+    Ctl(L"BUTTON", L"Adaptation automatique", BS_AUTOCHECKBOX | WS_TABSTOP, 24, 204, 330, 20, ID_AUTO);
+    Ctl(L"STATIC", L"Ajout à la luminosité détectée :", 0, 24, 228, 135, 34, 0);
+    HWND tb = Ctl(TRACKBAR_CLASSW, L"", TBS_AUTOTICKS | WS_TABSTOP, 156, 228, 158, 28, ID_OFFSET);
+    SendMessageW(tb, TBM_SETRANGE, TRUE, MAKELPARAM(-50, 50));
+    SendMessageW(tb, TBM_SETTICFREQ, 10, 0);
+    SendMessageW(tb, TBM_SETLINESIZE, 0, 1);
+    SendMessageW(tb, TBM_SETPAGESIZE, 0, 10);
+    Ctl(L"STATIC", L"", SS_RIGHT, 314, 234, 44, 18, ID_S_OFFSET);
+
+    Ctl(L"BUTTON", L"Utiliser la webcam s'il n'y a pas de capteur", BS_AUTOCHECKBOX | WS_TABSTOP, 24, 266, 330, 20, ID_CAMERA);
+    Ctl(L"STATIC", L"Photo webcam toutes les", 0, 42, 296, 140, 18, 0);
+    HWND ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+                              S(184), S(293), S(60), S(22), g_hwnd, (HMENU)ID_INTERVAL, GetModuleHandleW(NULL), NULL);
+    SendMessageW(ed, WM_SETFONT, (WPARAM)g_font, FALSE);
+    HWND sp = Ctl(UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_NOTHOUSANDS,
+                  0, 0, 0, 0, ID_SPIN);
+    SendMessageW(sp, UDM_SETBUDDY, (WPARAM)ed, 0);
+    SendMessageW(sp, UDM_SETRANGE32, MIN_INTERVAL, MAX_INTERVAL);
+    SendMessageW(sp, UDM_SETPOS32, 0, g_camInterval);
+    Ctl(L"STATIC", L"secondes", 0, 252, 296, 100, 18, 0);
+    Ctl(L"STATIC", L"", SS_NOPREFIX, 42, 320, 316, 18, ID_S_NEXT);
+
+    Ctl(L"BUTTON", L"Lancer au démarrage de Windows", BS_AUTOCHECKBOX | WS_TABSTOP, 24, 348, 330, 20, ID_STARTUP);
+
+    Ctl(L"BUTTON", L"Réduire dans la barre", BS_PUSHBUTTON | WS_TABSTOP, 150, 388, 125, 28, ID_HIDE);
+    Ctl(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 283, 388, 87, 28, ID_QUIT);
+
+    SyncControls();
+    RefreshStatus();
+}
+
+static void ShowMainWindow() {
+    ShowWindow(g_hwnd, IsIconic(g_hwnd) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(g_hwnd);
+    SyncControls();
+    RefreshStatus();
+}
+
+static void SetOffset(LONG o) {
     if (o > 50) o = 50;
     if (o < -50) o = -50;
     g_offset = o;
     RegPut(L"Offset", (DWORD)o);
+    SyncControls();
     SetEvent(g_wakeEvent);
+}
+
+static void ReadInterval() {
+    BOOL ok;
+    UINT v = GetDlgItemInt(g_hwnd, ID_INTERVAL, &ok, FALSE);
+    if (!ok) return;
+    if (v < (UINT)MIN_INTERVAL) v = MIN_INTERVAL;
+    if (v > (UINT)MAX_INTERVAL) v = MAX_INTERVAL;
+    if ((LONG)v != g_camInterval) {
+        g_camInterval = v;
+        RegPut(L"CameraInterval", v);
+    }
 }
 
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_TRAY:
-        if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP) ShowMenu();
+        if (LOWORD(lp) == WM_LBUTTONUP) ShowMainWindow();
+        else if (LOWORD(lp) == WM_RBUTTONUP) ShowMenu();
         return 0;
     case WM_UPDATE:
         UpdateTip();
+        if (IsWindowVisible(h)) RefreshStatus();
         return 0;
     case WM_NOSENSOR:
         g_nid.uFlags = NIF_INFO;
         wcscpy(g_nid.szInfoTitle, APP_NAME);
         wcscpy(g_nid.szInfo, g_source == SRC_CAMERA
-            ? L"Pas de capteur de lumière : mesure avec la webcam toutes les 30 s."
+            ? L"Pas de capteur de lumière : mesure avec la webcam."
             : L"Pas de capteur ni de webcam : réglage selon l'heure et le soleil.");
-        g_nid.dwInfoFlags = NIIF_WARNING;
+        g_nid.dwInfoFlags = NIIF_INFO;
         Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+        return 0;
+    case WM_HSCROLL:
+        if ((HWND)lp == GetDlgItem(h, ID_OFFSET))
+            SetOffset((LONG)SendMessageW((HWND)lp, TBM_GETPOS, 0, 0));
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case ID_AUTO:     g_enabled = !g_enabled; RegPut(L"Enabled", g_enabled); SetEvent(g_wakeEvent); break;
-        case ID_BRIGHTER: ChangeOffset(+10); break;
-        case ID_DARKER:   ChangeOffset(-10); break;
-        case ID_RESET:    ChangeOffset(0); break;
-        case ID_CAMERA:   g_useCam = !g_useCam; RegPut(L"UseCamera", g_useCam); SetEvent(g_wakeEvent); break;
-        case ID_STARTUP:  SetStartup(!StartupEnabled()); break;
+        case ID_OPEN:     ShowMainWindow(); break;
+        case ID_MEASURE:  g_force = 1; SetEvent(g_wakeEvent); break;
+        case ID_AUTO:     g_enabled = !g_enabled; RegPut(L"Enabled", g_enabled); SyncControls(); SetEvent(g_wakeEvent); break;
+        case ID_BRIGHTER: SetOffset(g_offset + 10); break;
+        case ID_DARKER:   SetOffset(g_offset - 10); break;
+        case ID_CAMERA:   g_useCam = !g_useCam; RegPut(L"UseCamera", g_useCam); g_remeasure = 1; SyncControls(); SetEvent(g_wakeEvent); break;
+        case ID_STARTUP:  SetStartup(!StartupEnabled()); SyncControls(); break;
+        case ID_INTERVAL:
+            if (HIWORD(wp) == EN_CHANGE) ReadInterval();
+            else if (HIWORD(wp) == EN_KILLFOCUS) SendDlgItemMessageW(h, ID_SPIN, UDM_SETPOS32, 0, g_camInterval);
+            break;
+        case ID_HIDE:     ShowWindow(h, SW_HIDE); break;
         case ID_QUIT:     DestroyWindow(h); break;
         }
+        return 0;
+    case WM_CLOSE:        // la croix cache la fenetre, l'app reste dans la barre
+        ShowWindow(h, SW_HIDE);
         return 0;
     case WM_DESTROY:
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
@@ -496,33 +665,67 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"LuminosityManager_SingleInstance");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        // deja lance : on affiche la fenetre existante
+        HWND other = FindWindowW(L"LuminosityManagerWnd", NULL);
+        if (other) PostMessageW(other, WM_COMMAND, ID_OPEN, 0);
+        return 0;
+    }
 
     g_enabled = RegGet(L"Enabled", 1) ? 1 : 0;
     g_offset = (LONG)RegGet(L"Offset", 0);
     if (g_offset > 50 || g_offset < -50) g_offset = 0;
     g_useCam = RegGet(L"UseCamera", 1) ? 1 : 0;
+    g_camInterval = (LONG)RegGet(L"CameraInterval", 30);
+    if (g_camInterval < MIN_INTERVAL || g_camInterval > MAX_INTERVAL) g_camInterval = 30;
     g_lat = (LONG)RegGet(L"Latitude", (DWORD)g_lat);    // degres x100
     g_lon = (LONG)RegGet(L"Longitude", (DWORD)g_lon);
+    if (StartupEnabled()) SetStartup(true);             // met a jour l'ancienne entree (ajoute --tray)
 
-    WNDCLASSW wc = {};
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_UPDOWN_CLASS | ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES };
+    InitCommonControlsEx(&icc);
+    HDC dc = GetDC(NULL);
+    g_dpi = GetDeviceCaps(dc, LOGPIXELSY);
+    ReleaseDC(NULL, dc);
+
+    HICON bigIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                      GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
+    HICON smallIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
+
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
+    wc.hIcon = bigIcon;
+    wc.hIconSm = smallIcon;
+    wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"LuminosityManagerWnd";
-    RegisterClassW(&wc);
-    g_hwnd = CreateWindowW(wc.lpszClassName, APP_NAME, 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, inst, NULL);
+    RegisterClassExW(&wc);
+
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    RECT r = { 0, 0, S(380), S(426) };
+    AdjustWindowRect(&r, style, FALSE);
+    wchar_t title[64];
+    swprintf(title, 64, L"%ls %ls", APP_NAME, APP_VERSION);
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, title, style, CW_USEDEFAULT, CW_USEDEFAULT,
+                             r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    CreateControls();
 
     g_nid.cbSize = sizeof(g_nid);
     g_nid.hWnd = g_hwnd;
     g_nid.uID = 1;
     g_nid.uCallbackMessage = WM_TRAY;
-    g_nid.hIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
-                                    GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
+    g_nid.hIcon = smallIcon;
     wcscpy(g_nid.szTip, APP_NAME);
     AddTrayIcon();
+
+    // Lance au demarrage de Windows (--tray) : on reste discret dans la barre
+    if (!wcsstr(cmdLine, L"--tray")) ShowWindow(g_hwnd, show);
 
     g_quitEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     g_wakeEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -530,6 +733,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (IsDialogMessageW(g_hwnd, &msg)) continue;    // Tab / Entree entre les controles
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
