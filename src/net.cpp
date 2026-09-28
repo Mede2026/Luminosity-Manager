@@ -2,6 +2,8 @@
 // WinHTTP est inclus dans Windows : aucune dependance a ajouter.
 #include "app.h"
 #include <winhttp.h>
+#include <bcrypt.h>
+#include <string.h>
 #include <stdio.h>
 #include <ctype.h>
 
@@ -77,19 +79,6 @@ static bool HttpGet(const wchar_t *url, char **data, DWORD *size, DWORD maxSize,
     return ok;
 }
 
-// "v0.10" > "v0.9" : compare chaque nombre separe par des points
-static bool IsNewer(const wchar_t *remote, const wchar_t *local) {
-    if (*remote == L'v' || *remote == L'V') remote++;
-    for (;;) {
-        wchar_t *e1, *e2;
-        long a = wcstol(remote, &e1, 10), b = wcstol(local, &e2, 10);
-        if (a != b) return a > b;
-        if (*e1 != L'.' && *e2 != L'.') return false;
-        remote = *e1 == L'.' ? e1 + 1 : e1;
-        local = *e2 == L'.' ? e2 + 1 : e2;
-    }
-}
-
 // ---------- Mises a jour ----------
 static DWORD WINAPI UpdateCheckThread(LPVOID) {
     // github.com/<repo>/releases/latest redirige vers .../releases/tag/vX.Y : on lit juste la redirection
@@ -105,7 +94,7 @@ static DWORD WINAPI UpdateCheckThread(LPVOID) {
             int n = 0;
             while (tag[n] && tag[n] != L'/' && tag[n] != L'?' && n < 31) { clean[n] = tag[n]; n++; }
             clean[n] = 0;
-            if (n && IsNewer(clean, APP_VERSION)) {
+            if (n && IsNewerVersion(clean, APP_VERSION)) {
                 wcscpy(g_newVersion, clean);
                 swprintf(g_newUrl, 512, L"https://github.com/" REPO L"/releases/download/%ls/LuminosityManager.exe", clean);
                 result = 1;
@@ -124,12 +113,37 @@ void StartUpdateCheck() {
 }
 
 // Telecharge le nouveau .exe, le met a la place de l'actuel (l'actuel devient .old).
+// Empreinte SHA-256 (64 caracteres hexa) calculee par Windows (BCrypt)
+static bool Sha256Hex(const void *data, DWORD len, char out[65]) {
+    BCRYPT_ALG_HANDLE alg = NULL;
+    UCHAR hash[32];
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0) != 0) return false;
+    bool ok = BCryptHash(alg, NULL, 0, (PUCHAR)data, len, hash, 32) == 0;
+    BCryptCloseAlgorithmProvider(alg, 0);
+    for (int i = 0; ok && i < 32; i++) snprintf(out + i * 2, 3, "%02x", hash[i]);
+    return ok;
+}
+
+// Le fichier telecharge est-il exactement celui publie sur GitHub ? (empreinte dans le fichier .sha256)
+static bool VerifyDownload(const char *bin, DWORD len) {
+    wchar_t url[600];
+    swprintf(url, 600, L"%ls.sha256", g_newUrl);
+    char *txt;
+    DWORD tlen;
+    if (!HttpGet(url, &txt, &tlen, 4096)) return false;          // pas d'empreinte = on refuse
+    char expected[65], actual[65];
+    bool ok = ParseSha256(txt, expected) && Sha256Hex(bin, len, actual) && strcmp(expected, actual) == 0;
+    free(txt);
+    return ok;
+}
+
 static DWORD WINAPI UpdateDownloadThread(LPVOID) {
     char *bin;
     DWORD len;
     WPARAM ok = 0;
     if (HttpGet(g_newUrl, &bin, &len, 16 * 1024 * 1024)) {
-        if (len > 10 * 1024 && bin[0] == 'M' && bin[1] == 'Z') {   // vrai programme Windows
+        // vrai programme Windows ET empreinte SHA-256 identique a celle publiee
+        if (len > 10 * 1024 && bin[0] == 'M' && bin[1] == 'Z' && VerifyDownload(bin, len)) {
             wchar_t exe[MAX_PATH], tmp[MAX_PATH + 8], old[MAX_PATH + 8];
             GetModuleFileNameW(NULL, exe, MAX_PATH);
             swprintf(tmp, MAX_PATH + 8, L"%ls.new", exe);

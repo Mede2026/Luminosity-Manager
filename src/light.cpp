@@ -241,18 +241,6 @@ static bool ReadFrames(IMFSourceReader *reader, int frames, UINT32 w, UINT32 h, 
     return true;
 }
 
-// Couleur moyenne (RGB lineaire) -> temperature de couleur en Kelvin (formule de McCamy)
-static double RgbToKelvin(double r, double g, double b) {
-    double X = 0.4124 * r + 0.3576 * g + 0.1805 * b;
-    double Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    double Z = 0.0193 * r + 0.1192 * g + 0.9505 * b;
-    double sum = X + Y + Z;
-    if (sum <= 0) return -1;
-    double x = X / sum, y = Y / sum;
-    double nn = (x - 0.3320) / (0.1858 - y);
-    return 449 * nn * nn * nn + 3525 * nn * nn + 6823.3 * nn + 5520.33;
-}
-
 bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, CamShot *out) {
     memset(out, 0, sizeof(*out));
     InitLinear();
@@ -395,14 +383,5 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
 double SunElevation(double lat, double lon) {
     SYSTEMTIME t;
     GetSystemTime(&t);
-    static const int cum[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
-    int day = cum[t.wMonth - 1] + t.wDay;
-    const double PI = 3.14159265358979, R = PI / 180;
-    double decl = 23.44 * sin(2 * PI * (284 + day) / 365.0);
-    double B = 2 * PI * (day - 81) / 364.0;
-    double eot = 9.87 * sin(2 * B) - 7.53 * cos(B) - 1.5 * sin(B);
-    double solarMin = t.wHour * 60 + t.wMinute + lon * 4 + eot;
-    double ha = solarMin / 4 - 180;
-    double s = sin(lat * R) * sin(decl * R) + cos(lat * R) * cos(decl * R) * cos(ha * R);
-    return asin(s) / R;
+    return SunElevationAt(lat, lon, t.wMonth, t.wDay, t.wHour, t.wMinute);
 }

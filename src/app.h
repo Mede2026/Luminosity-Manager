@@ -16,6 +16,7 @@
 #include <math.h>
 #include <wchar.h>
 #include <stdlib.h>
+#include "core.h"
 
 // Version injectee par build.sh a partir du fichier VERSION
 #ifndef APP_VERSION_STR
@@ -66,11 +67,8 @@ extern volatile LONG g_ambientK, g_displayK;     // couleur de la lumiere / du b
 extern volatile LONG g_ttSource, g_ttOk;         // 1 capteur, 2 webcam, 3 heure ; 0 = Windows a refuse
 enum { TT_NONE, TT_SENSOR, TT_CAMERA, TT_SUN };
 
-// La courbe lumiere -> luminosite, et ce que l'app a appris de toi
-static const int CURVE_POINTS = 11, LEARN_POINTS = 5;
-extern const double CURVE[CURVE_POINTS][2];      // { lux, position 0..1 }
+// La courbe lumiere -> luminosite (core.h), et ce que l'app a appris de toi
 extern double g_learn[LEARN_POINTS];             // ajouts appris a 0 %, 25 %, 50 %, 75 %, 100 % de la courbe
-double CurveT(double lux);
 void ResetLearning();
 extern volatile LONG g_lat, g_lon;                // degres x100
 extern volatile LONG g_profilePct;                // -1 = aucun profil actif

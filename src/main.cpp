@@ -232,68 +232,16 @@ void HistSave() {
 }
 
 // ---------- True Tone ----------
-// Couleur typique de la lumiere selon le soleil : lampes chaudes la nuit, lumiere du jour a midi
-static double SunKelvin(double e) {
-    static const double P[][2] = { { -6, 2900 }, { 0, 3600 }, { 15, 5500 }, { 40, 6500 } };
-    if (e <= P[0][0]) return P[0][1];
-    for (int i = 1; i < 4; i++)
-        if (e <= P[i][0]) return P[i - 1][1] + (P[i][1] - P[i - 1][1]) * (e - P[i - 1][0]) / (P[i][0] - P[i - 1][0]);
-    return 6500;
-}
-
-// Couleur d'un corps chauffe a k Kelvin (approximation de Tanner Helland), 0..1 par canal
-static void KelvinRgb(double k, double rgb[3]) {
-    double t = k / 100, r, g, b;
-    if (t <= 66) { r = 255; g = 99.4708025861 * log(t) - 161.1195681661; }
-    else { r = 329.698727446 * pow(t - 60, -0.1332047592); g = 288.1221695283 * pow(t - 60, -0.0755148492); }
-    if (t >= 66) b = 255;
-    else if (t <= 19) b = 0;
-    else b = 138.5177312231 * log(t - 10) - 305.0447927307;
-    double v[3] = { r, g, b };
-    for (int i = 0; i < 3; i++) rgb[i] = (v[i] < 0 ? 0 : v[i] > 255 ? 255 : v[i]) / 255;
-}
-
 // Blanc de l'ecran a k Kelvin : facteurs par rapport au blanc normal (6500 K), sans jamais depasser 1
 static bool ApplyDisplayKelvin(double k) {
-    double c[3], ref[3];
-    KelvinRgb(k, c);
-    KelvinRgb(6500, ref);
-    double f[3], mx = 0;
-    for (int i = 0; i < 3; i++) { f[i] = c[i] / ref[i]; if (f[i] > mx) mx = f[i]; }
-    for (int i = 0; i < 3; i++) f[i] /= mx;
+    double f[3];
+    DisplayFactors(k, f);
     return ColorApply(f[0], f[1], f[2]);
 }
 
 static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-// ---------- La courbe : lumiere de la piece (lux) -> position 0..1 ----------
-// Inspiree des telephones : on voit la lumiere de facon "logarithmique" (10 -> 100 lux = aussi
-// marquant que 100 -> 1000 lux). Reperes : nuit ~3 lux, piece sombre ~30, salon ~200, bureau ~400,
-// pres d'une fenetre ~1500, plein jour 8000+.
-const double CURVE[CURVE_POINTS][2] = {
-    { 0, 0 }, { 3, 0.04 }, { 10, 0.12 }, { 30, 0.25 }, { 80, 0.38 }, { 200, 0.52 },
-    { 400, 0.64 }, { 800, 0.77 }, { 1500, 0.88 }, { 3000, 0.96 }, { 8000, 1 },
-};
-
-double CurveT(double lux) {
-    double x = log10((lux < 0 ? 0 : lux) + 1);
-    for (int i = 1; i < CURVE_POINTS; i++) {
-        double x0 = log10(CURVE[i - 1][0] + 1), x1 = log10(CURVE[i][0] + 1);
-        if (x <= x1) return CURVE[i - 1][1] + (CURVE[i][1] - CURVE[i - 1][1]) * (x - x0) / (x1 - x0);
-    }
-    return 1;
-}
-
-// ---------- Apprentissage par niveau de lumiere ----------
-// Chaque point appris couvre une zone de la courbe ; un reglage fait dans le noir ne change
-// que la partie "noir" de la courbe.
-static double LearnAt(double t) {
-    double pos = t * (LEARN_POINTS - 1);
-    int i = (int)pos;
-    if (i >= LEARN_POINTS - 1) return g_learn[LEARN_POINTS - 1];
-    return g_learn[i] + (g_learn[i + 1] - g_learn[i]) * (pos - i);
-}
-
+// ---------- Apprentissage par niveau de lumiere (calculs dans core.cpp) ----------
 static void SaveLearn() {
     for (int i = 0; i < LEARN_POINTS; i++) {
         wchar_t name[16];
@@ -303,14 +251,7 @@ static void SaveLearn() {
 }
 
 static void Learn(double delta, double t) {
-    for (int i = 0; i < LEARN_POINTS; i++) {
-        double w = 1 - fabs(t * (LEARN_POINTS - 1) - i);   // poids en triangle : la somme fait 1
-        if (w > 0) {
-            g_learn[i] += delta * w;
-            if (g_learn[i] > 60) g_learn[i] = 60;
-            if (g_learn[i] < -60) g_learn[i] = -60;
-        }
-    }
+    LearnApply(g_learn, delta, t);
     SaveLearn();
 }
 
@@ -355,14 +296,6 @@ static bool CameraLux(bool calibrate, double *lux) {
     g_camKelvin = shot.kelvin;
     *lux = 300.0 * scene / g_camRef;
     return true;
-}
-
-// Soleil -> lumiere typique d'une piece (nuit ~8 lux, soleil haut ~1000 lux)
-static double SunLux(double elevation) {
-    double k = (elevation + 6) / 36;
-    if (k < 0) k = 0;
-    if (k > 1) k = 1;
-    return pow(10.0, 0.9 + 2.1 * k);
 }
 
 // ---------- Boucle de travail (fil separe) ----------
@@ -496,7 +429,7 @@ DWORD WINAPI Worker(LPVOID) {
 
             // 4) Luminosite voulue = courbe (entre min et max) + ajout + ce que l'app a appris
             int detected = g_min + (int)lround(t * (g_max - g_min));
-            double learned = LearnAt(t);
+            double learned = LearnAt(g_learn, t);
             g_detected = detected;
             g_learnNow = (LONG)lround(learned);
             g_applied = Clamp(detected + g_offset + (int)lround(learned), g_min, g_max);

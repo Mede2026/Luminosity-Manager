@@ -19,8 +19,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
       - name: Lire la version
         run: echo "VERSION=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
+      - name: Tests automatiques (pas de Release si un test echoue)
+        run: ./tests/run.sh
       - name: Compiler
         run: ./build.sh
+      - name: Empreinte SHA-256 (l'app verifie les mises a jour avec)
+        run: sha256sum LuminosityManager.exe > LuminosityManager.exe.sha256
       - name: Publier la Release
         # Outil officiel "gh" (deja installe) : pas d'action externe a tenir a jour
         env:
@@ -34,8 +38,8 @@ jobs:
           EOF
           if gh release view "v$VERSION" > /dev/null 2>&1; then
             # la Release existe deja (relance) : on remplace juste le .exe
-            gh release upload "v$VERSION" LuminosityManager.exe --clobber
+            gh release upload "v$VERSION" LuminosityManager.exe LuminosityManager.exe.sha256 --clobber
           else
-            gh release create "v$VERSION" LuminosityManager.exe --target "$GITHUB_SHA" \
+            gh release create "v$VERSION" LuminosityManager.exe LuminosityManager.exe.sha256 --target "$GITHUB_SHA" \
               --title "Luminosity Manager $VERSION" --notes-file notes.md
           fi

@@ -1,3 +1,4 @@
 LuminosityManager.exe
 *.res
 src/ui.bundle.html
+tests/test_core
