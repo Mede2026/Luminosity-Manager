@@ -29,9 +29,6 @@ jobs:
           files: LuminosityManager.exe
           body: |
             Télécharge **LuminosityManager.exe** ci-dessous et double-clique dessus. Aucune installation.
+            Si une version précédente est déjà installée, elle se met à jour toute seule (onglet « Plus »).
 
-            - Mesure la lumière : capteur, sinon webcam, sinon position du soleil
-            - Fenêtre de réglages + icône près de l'horloge
-            - Bouton « Mesurer maintenant et ajuster »
-            - Ajout réglable (−50 % à +50 %) à la luminosité détectée
-            - Intervalle des photos webcam réglable (5 s à 1 h)
+            Nouveautés et mode d'emploi : voir le [README](https://github.com/${{ github.repository }}#readme).
