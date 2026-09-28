@@ -17,7 +17,7 @@ Application Windows légère (**~285 Ko**, aucune installation) qui ajuste **aut
 | 3 | **Soleil** : heure + position de ta ville | Pas de webcam, ou webcam désactivée |
 
 ### Comment la webcam mesure la lumière
-- L'app **évite la caméra infrarouge** (Windows Hello), dont l'image est presque noire. Tu peux aussi choisir la caméra dans **Réglages**.
+- L'app **évite la caméra infrarouge** (Windows Hello), dont l'image est presque noire. Tu peux aussi choisir la caméra dans la page **Webcam**.
 - L'app **fixe elle-même l'exposition** (le temps pendant lequel la caméra capte la lumière) et l'ajuste pour que l'image ne soit ni noire ni blanche. Comme elle connaît l'exposition, elle calcule la vraie lumière (en lux, estimée).
 - Après la photo, la caméra est remise en automatique pour les autres apps (Teams, Caméra…).
 - **Calibrer** : dans une pièce éclairée normalement, clique sur « Calibrer » : cette lumière devient la référence.
@@ -39,7 +39,7 @@ Interrupteur **Activé** toujours visible en bas à gauche.
 ## Il apprend de toi
 Si tu changes la luminosité toi-même (touches Fn ou Windows), l'app **retient l'écart** : l'« ajout » change d'autant (ex. +10 %). Si un profil est actif, c'est le profil qui est mis à jour.
 
-## Raccourcis clavier (modifiables dans « Plus »)
+## Raccourcis clavier (modifiables dans la page « Raccourcis »)
 | Raccourci | Action |
 |---|---|
 | Ctrl + Alt + ↑ | Plus clair (+5 %) |
