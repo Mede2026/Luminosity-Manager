@@ -1,4 +1,13 @@
 /* Luminosity Manager - style Windows 11 (Fluent), clair et sombre selon Windows */
+
+/* Police Inter (libre, licence OFL) integree dans l'app : belle et identique sur tous les PC */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
 :root {
   --accent: #0067c0;
   --accent-text: #ffffff;
@@ -51,7 +60,10 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
-  font: 14px/1.43 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.45 "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-optical-sizing: auto;
+  font-feature-settings: "cv11", "calt";
+  letter-spacing: -0.006em;
   color: var(--text);
   background: var(--bg);
   user-select: none;
@@ -59,8 +71,8 @@ body {
   overflow: hidden;
 }
 body.mica { background: transparent; }
-h1, h2, b { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
-h1 { font-size: 28px; font-weight: 600; margin: 4px 0 20px; letter-spacing: -0.2px; }
+h1, h2, b { font-family: inherit; }
+h1 { font-size: 28px; font-weight: 650; margin: 4px 0 20px; letter-spacing: -0.022em; }
 h2 { font-size: 15px; font-weight: 600; margin: 0; }
 small, .muted { color: var(--text2); font-size: 12px; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -198,7 +210,7 @@ input[type=range]:hover::-webkit-slider-thumb { box-shadow: inset 0 0 0 3px var(
 .gauge .value { stroke: var(--accent); stroke-dasharray: 0 314.2; transition: stroke-dasharray .6s cubic-bezier(.1, .9, .2, 1), stroke .3s; }
 .gauge.off .value { stroke: var(--off); }
 .gauge-center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.gauge-num { font: 600 50px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+.gauge-num { font: 650 52px/1 "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
 .gauge-num small { font-size: 22px; color: var(--text2); margin-left: 2px; letter-spacing: 0; }
 .gauge-label { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; color: var(--text2); font-size: 12px; }
 
@@ -325,7 +337,7 @@ input[type=range]:hover::-webkit-slider-thumb { box-shadow: inset 0 0 0 3px var(
   display: inline-flex; gap: 4px; align-items: center; min-width: 190px; justify-content: flex-end;
 }
 .keycap kbd {
-  font: 600 12px "Segoe UI Variable Text", "Segoe UI", system-ui; padding: 3px 9px; border-radius: 5px;
+  font: 600 12px "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; padding: 3px 9px; border-radius: 5px;
   background: var(--control); border: 1px solid var(--stroke-strong); border-bottom-width: 2px; min-width: 28px; text-align: center;
 }
 .key-btn { min-width: 200px; display: flex; justify-content: flex-end; background: transparent; border-color: transparent; }

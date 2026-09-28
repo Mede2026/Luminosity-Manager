@@ -1,6 +1,6 @@
 # Luminosity Manager
 
-Application Windows légère (**~300 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
+Application Windows légère (**~410 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
 
 ## Utilisation
 1. Va dans **Releases** (à droite sur la page GitHub) et télécharge `LuminosityManager.exe`.
@@ -77,4 +77,5 @@ L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Met
 - `src/webview2/WebView2.h` : généré avec `widl` depuis l'IDL officiel du SDK WebView2 (licence dans ce dossier).
 - Compiler : `./build.sh` (MinGW-w64). La version vient du fichier `VERSION`.
 - Icônes : `python3 src/make_icon.py`.
+- Police : [Inter](https://rsms.me/inter/) (licence SIL OFL 1.1, voir `src/ui/fonts/`), intégrée dans l'app.
 - **Publier une version** : changer le numéro dans `VERSION` et pousser → GitHub Actions compile et crée la Release.
