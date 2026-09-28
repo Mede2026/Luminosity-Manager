@@ -9,6 +9,7 @@ let state = {};
 let hist = null;
 let hotkeys = [];
 let capturing = -1;          // index du raccourci en cours de saisie
+let curvePts = [[0, 0], [8000, 1]];   // courbe lux -> position (envoyee par le programme)
 
 // ---------- Navigation ----------
 function showPage(name) {
@@ -37,6 +38,26 @@ const signed = (v) => (v > 0 ? '+' : v < 0 ? '−' : '+') + Math.abs(v) + ' %';
 const fmtLux = (v) => (v >= 1000 ? (v / 1000).toFixed(1).replace('.', ',') + ' k' : Math.round(v)) + ' lux';
 const fmtCoord = (v) => v.toFixed(2).replace('.', ',');
 const pad = (n) => String(n).padStart(2, '0');
+// Exposition : en unites Windows, -6 = 2^-6 s = 1/64 s
+function fmtExp(v, logUnits) {
+  if (!logUnits) return String(v);
+  return v < 0 ? '1/' + Math.round(Math.pow(2, -v)) + ' s' : Math.round(Math.pow(2, v)) + ' s';
+}
+// Meme calcul que le programme : lux -> position sur la courbe (0..1)
+function curveT(lux) {
+  const x = Math.log10(Math.max(0, lux) + 1);
+  for (let i = 1; i < curvePts.length; i++) {
+    const x0 = Math.log10(curvePts[i - 1][0] + 1), x1 = Math.log10(curvePts[i][0] + 1);
+    if (x <= x1) return curvePts[i - 1][1] + ((curvePts[i][1] - curvePts[i - 1][1]) * (x - x0)) / (x1 - x0);
+  }
+  return 1;
+}
+function learnAt(learn, t) {
+  if (!learn || !learn.length) return 0;
+  const pos = t * (learn.length - 1), i = Math.floor(pos);
+  if (i >= learn.length - 1) return learn[learn.length - 1];
+  return learn[i] + (learn[i + 1] - learn[i]) * (pos - i);
+}
 function setRange(el, v) {
   el.value = v;
   el.style.setProperty('--p', ((v - el.min) / (el.max - el.min)) * 100 + '%');
@@ -90,7 +111,8 @@ function renderState() {
   $('source').textContent = SOURCES[s.source] || '—';
   $('light').textContent = s.source === 'sun' ? 'Soleil ' + (s.sunElev > 0 ? '+' : '') + s.sunElev + '°'
     : (s.source === 'camera' ? '≈ ' : '') + fmtLux(s.lux);
-  $('calc').textContent = s.detected < 0 ? '—' : s.detected + ' % ' + (s.offset ? (s.offset > 0 ? '+ ' : '− ') + Math.abs(s.offset) + ' % ' : '') + '→ ' + s.applied + ' %';
+  const extra = s.offset + (s.learnNow || 0);
+  $('calc').textContent = s.detected < 0 ? '—' : s.detected + ' % ' + (extra ? (extra > 0 ? '+ ' : '− ') + Math.abs(extra) + ' % ' : '') + '→ ' + s.applied + ' %';
   $('btn-toggle').textContent = on ? 'Désactiver' : 'Activer';
   $('btn-measure').disabled = !on;
   $('enabled').checked = on;
@@ -116,6 +138,15 @@ function renderState() {
   $('cam-level').textContent = cam ? s.camLevel + ' %' : '—';
   $('cam-lux').textContent = cam ? '≈ ' + fmtLux(s.lux) : '—';
   $('cam-next').textContent = !on ? 'app désactivée' : cam ? 'dans ' + s.camNext + ' s' : '—';
+  $('cam-exp').textContent = cam && s.camManualOk ? fmtExp(s.camExposure, s.camLogUnits) : '—';
+  $('camLocked').checked = s.camLocked;
+  $('camLocked').disabled = !s.camManualOk;
+  const ex = $('camExp');
+  if (s.camExpMax > s.camExpMin) {
+    ex.min = s.camExpMin; ex.max = s.camExpMax; ex.step = s.camExpStep || 1;
+    if (document.activeElement !== ex) { setRange(ex, s.camLockValue); $('camExp-val').textContent = fmtExp(s.camLockValue, s.camLogUnits); }
+  }
+  $('exp-row').classList.toggle('disabled', !s.camLocked || !s.camManualOk);
   const q = $('cam-quality');
   if (!s.useCam) { q.className = 'quality'; q.textContent = 'Webcam désactivée : la luminosité suit le soleil.'; }
   else if (s.source === 'sensor') { q.className = 'quality good'; q.textContent = 'Ton PC a un capteur de lumière : la webcam n\'est pas utilisée.'; }
@@ -126,10 +157,20 @@ function renderState() {
       ['meh', 'La caméra règle son exposition seule, mais l\'app la lit : mesure correcte.'],
       ['meh', 'La caméra ne donne pas son exposition : mesure approximative. Calibre-la.'],
     ];
-    const [cls, txt] = modes[s.camQuality] || modes[2];
+    let [cls, txt] = modes[s.camQuality] || modes[2];
+    if (s.camLocked && s.camQuality === 0) txt = 'Exposition verrouillée : toujours la même.';
+    if (s.camClip === 1) { cls = 'meh'; txt = 'Image trop sombre pour bien mesurer' + (s.camLocked ? ' : pousse l\'exposition vers la droite.' : '.'); }
+    if (s.camClip === 2) { cls = 'meh'; txt = 'Image trop claire (blanche) pour bien mesurer' + (s.camLocked ? ' : pousse l\'exposition vers la gauche.' : '.'); }
     q.className = 'quality ' + cls;
     q.textContent = (s.camUsed ? s.camUsed + ' · ' : '') + txt;
   }
+
+  // Ce que l'app a appris
+  const learned = (s.learn || []).some((v) => Math.abs(v) >= 0.5);
+  $('learn-text').textContent = learned
+    ? 'Ici, à cette lumière : ' + signed(s.learnNow || 0) + '. L\'app retient tes réglages pour chaque niveau de lumière (pointillés = sans tes réglages).'
+    : 'Rien pour l\'instant. Quand tu changes la luminosité toi-même, l\'app le retient pour ce niveau de lumière seulement.';
+  $('btn-forget').disabled = !learned;
 
   // Mises a jour
   $('updateCheck').checked = s.updateCheck;
@@ -277,23 +318,56 @@ $('chart').addEventListener('mouseleave', () => { $('tooltip').hidden = true; hi
 window.addEventListener('resize', () => { drawChart(); drawCurve(); });
 
 // ---------- Courbe (page Luminosite) ----------
+// Axe horizontal = lumiere de la piece (echelle logarithmique), vertical = luminosite de l'ecran
 function drawCurve() {
   const s = state, svg = $('curve');
-  if (s.min === undefined) return;
-  const W = 600, H = 180;
+  const box = svg.getBoundingClientRect();
+  if (s.min === undefined || !box.width) return;
+  const W = box.width, H = box.height, L = 36, R = 12, T = 24, B = 26;
+  const pw = W - L - R, ph = H - T - B, maxLux = 8000;
+  const X = (lux) => L + (Math.log10(lux + 1) / Math.log10(maxLux + 1)) * pw;
+  const Y = (pct) => T + ph - (pct * ph) / 100;
   svg.innerHTML = '';
-  for (const v of [0, 50, 100]) el('line', { x1: 0, x2: W, y1: H - (v * H) / 100, y2: H - (v * H) / 100, class: 'grid' }, svg);
-  el('rect', { x: 0, y: H - (s.max * H) / 100, width: W, height: ((s.max - s.min) * H) / 100, class: 'zone' }, svg);
-  const pts = [], base = [];
-  for (let i = 0; i <= 60; i++) {
-    const t = i / 60;                                   // niveau de lumiere 0..1
-    const det = s.min + t * (s.max - s.min);
-    const out = Math.max(s.min, Math.min(s.max, det + s.offset));
-    pts.push(`${(t * W).toFixed(1)},${(H - (out * H) / 100).toFixed(1)}`);
-    base.push(`${(t * W).toFixed(1)},${(H - (det * H) / 100).toFixed(1)}`);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  el('rect', { x: L, y: Y(s.max), width: pw, height: Y(s.min) - Y(s.max), class: 'zone' }, svg);
+  for (const v of [0, 50, 100]) {
+    el('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: 'grid' }, svg);
+    el('text', { x: L - 8, y: Y(v) + 4, 'text-anchor': 'end', class: 'axis' }, svg).textContent = v + '%';
   }
-  if (s.offset) el('polyline', { points: base.join(' '), class: 'base' }, svg);
-  el('polyline', { points: pts.join(' '), class: 'line' }, svg);
+  const marks = [[3, 'Nuit'], [30, 'Pièce sombre'], [200, 'Salon'], [1500, 'Près d\'une fenêtre'], [8000, 'Plein jour']];
+  for (const [lux, name] of marks) {
+    el('line', { x1: X(lux), x2: X(lux), y1: T, y2: T + ph, class: 'grid' }, svg);
+    el('text', { x: X(lux), y: H - 6, 'text-anchor': lux === 8000 ? 'end' : 'middle', class: 'axis' }, svg).textContent = name;
+  }
+  const clamp = (v) => Math.max(s.min, Math.min(s.max, v));
+  const base = [], mine = [];
+  for (let i = 0; i <= 80; i++) {
+    const lux = Math.pow(10, (i / 80) * Math.log10(maxLux + 1)) - 1, t = curveT(lux);
+    const det = s.min + t * (s.max - s.min);
+    base.push(X(lux).toFixed(1) + ',' + Y(clamp(det)).toFixed(1));
+    mine.push(X(lux).toFixed(1) + ',' + Y(clamp(det + s.offset + learnAt(s.learn, t))).toFixed(1));
+  }
+  el('polyline', { points: base.join(' '), class: 'base' }, svg);
+  el('polyline', { points: mine.join(' '), class: 'line' }, svg);
+  // Points appris (seulement ceux qui ont change)
+  (s.learn || []).forEach((v, i) => {
+    if (Math.abs(v) < 0.5) return;
+    const t = i / (s.learn.length - 1);
+    let lux = 0;                                          // lux correspondant a cette position
+    for (let k = 0; k <= 400; k++) { const l = Math.pow(10, (k / 400) * Math.log10(maxLux + 1)) - 1; if (curveT(l) >= t) { lux = l; break; } }
+    el('circle', { cx: X(lux), cy: Y(clamp(s.min + t * (s.max - s.min) + s.offset + v)), r: 4.5, class: 'learn' }, svg);
+  });
+  // Tu es ici
+  const here = $('here');
+  if (s.lux >= 0 && s.enabled) {
+    const x = X(Math.min(maxLux, s.lux)), y = Y(s.applied);
+    el('line', { x1: x, x2: x, y1: y, y2: T + ph, class: 'me-line' }, svg);
+    el('circle', { cx: x, cy: y, r: 6, class: 'me' }, svg);
+    here.hidden = false;
+    here.style.left = Math.max(60, Math.min(W - 60, x)) + 'px';
+    here.style.top = y + 'px';
+    here.textContent = 'Tu es ici : ' + (s.source === 'camera' ? '≈ ' : '') + fmtLux(s.lux) + ' → ' + s.applied + ' %';
+  } else here.hidden = true;
 }
 
 // ---------- Profils ----------
@@ -382,6 +456,10 @@ $('useCam').onchange = (e) => send('setUseCam', { value: e.target.checked ? 1 : 
 steppers.interval.el.addEventListener('change', (e) => send('setInterval', { value: e.detail }));
 $('camera').onchange = (e) => { send('setCamera', { text: e.target.value }); toast('Caméra changée : nouvelle photo en cours…'); };
 $('btn-calibrate').onclick = () => send('calibrate');
+$('camLocked').onchange = (e) => send('setCamLocked', { value: e.target.checked ? 1 : 0 });
+$('camExp').oninput = (e) => { setRange(e.target, +e.target.value); $('camExp-val').textContent = fmtExp(+e.target.value, state.camLogUnits); };
+$('camExp').onchange = (e) => { send('setCamExposure', { value: +e.target.value }); toast('Nouvelle photo avec cette exposition…'); };
+$('btn-forget').onclick = () => send('resetLearning');
 
 $('p-pct').oninput = (e) => { setRange(e.target, +e.target.value); $('p-pct-val').textContent = e.target.value + ' %'; };
 $('btn-pick').onclick = () => send('pickApp');
@@ -423,6 +501,7 @@ function onMessage(m) {
     case 'init':
       $('version').textContent = m.version;
       document.body.classList.toggle('mica', !!m.mica);
+      if (m.curve) curvePts = m.curve;
       if (m.accent && !matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.style.setProperty('--accent', m.accent);
       else document.documentElement.style.removeProperty('--accent');
       break;
@@ -510,12 +589,12 @@ function demo() {
     light.push(l);
     bright.push(l < 0 ? -1 : Math.round(Math.min(100, 15 + l * 0.85)));
   }
-  onMessage({ type: 'init', version: '0.3', mica: false, accent: '#0067c0' });
+  onMessage({ type: 'init', version: '0.4', mica: false, accent: '#0067c0', curve: [[0, 0], [3, 0.04], [10, 0.12], [30, 0.25], [80, 0.38], [200, 0.52], [400, 0.64], [800, 0.77], [1500, 0.88], [3000, 0.96], [8000, 1]] });
   onMessage({ type: 'hist', nowMin, light, bright });
   onMessage({ type: 'profiles', list: [{ exe: 'LumaFusion.exe', pct: 100 }, { exe: 'rekordbox.exe', pct: 70 }] });
   onMessage({ type: 'cameras', list: ['Integrated Camera', 'Integrated IR Camera'], choice: '' });
   onMessage({ type: 'city', ok: true, searched: false, name: 'Boucherville, Québec, Canada', lat: 45.59, lon: -73.44 });
-  onMessage({ type: 'update', status: 'available', version: 'v0.4', current: '0.3' });
+  onMessage({ type: 'update', status: 'latest', version: '', current: '0.4' });
   onMessage({ type: 'hotkeys', list: [{ vk: 38, mods: 6 }, { vk: 40, mods: 6 }, { vk: 77, mods: 6 }, { vk: 65, mods: 6, failed: false }] });
   const w = 64, h = 48;
   let px = '';
@@ -527,7 +606,8 @@ function demo() {
   let ago = 3;
   const tick = () => {
     onMessage({ type: 'state', enabled: true, bright: 72, lux: 340, source: 'camera', sunElev: 12, detected: 67, offset: 5,
-      min: 10, max: 100, applied: 72, ago: ago++ % 30, camNext: 30 - (ago % 30), useCam: true, camInterval: 30, camQuality: 0,
+      min: 10, max: 100, applied: 72, learnNow: 0, level: 0.6, learn: [8, 3, 0, 0, 0], camLocked: false, camLockValue: -6,
+      camExposure: -6, camExpMin: -11, camExpMax: -2, camExpStep: 1, camLogUnits: true, camManualOk: true, camClip: 0, ago: ago++ % 30, camNext: 30 - (ago % 30), useCam: true, camInterval: 30, camQuality: 0,
       camLevel: 46, startup: true, updateCheck: true, lat: 45.59, lon: -73.44, camUsed: 'Integrated Camera', profileApp: '', profilePct: -1 });
   };
   tick();

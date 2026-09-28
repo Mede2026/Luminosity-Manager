@@ -1,6 +1,6 @@
 # Luminosity Manager
 
-Application Windows légère (**~285 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
+Application Windows légère (**~290 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
 
 ## Utilisation
 1. Va dans **Releases** (à droite sur la page GitHub) et télécharge `LuminosityManager.exe`.
@@ -18,7 +18,9 @@ Application Windows légère (**~285 Ko**, aucune installation) qui ajuste **aut
 
 ### Comment la webcam mesure la lumière
 - L'app **évite la caméra infrarouge** (Windows Hello), dont l'image est presque noire. Tu peux aussi choisir la caméra dans la page **Webcam**.
-- L'app **fixe elle-même l'exposition** (le temps pendant lequel la caméra capte la lumière) et l'ajuste pour que l'image ne soit ni noire ni blanche. Comme elle connaît l'exposition, elle calcule la vraie lumière (en lux, estimée).
+- L'app **fixe elle-même l'exposition** (le temps pendant lequel la caméra capte la lumière) et l'ajuste d'un cran si l'image est trop noire ou trop blanche. Comme elle connaît l'exposition, elle calcule la vraie lumière (en lux, estimée).
+- **Exposition verrouillée** (page Webcam) : toujours la même exposition, choisie avec un curseur.
+- Mesure fiable : l'app revient à la lumière réelle (sans le « gamma » de l'image), ignore les lampes / fenêtres dans l'image (5 % les plus clairs et les plus sombres) et fait la moyenne de 3 images.
 - Après la photo, la caméra est remise en automatique pour les autres apps (Teams, Caméra…).
 - **Calibrer** : dans une pièce éclairée normalement, clique sur « Calibrer » : cette lumière devient la référence.
 - L'accueil montre une **miniature de la dernière photo** pour vérifier ce que voit la caméra.
@@ -36,8 +38,14 @@ Application Windows légère (**~285 Ko**, aucune installation) qui ajuste **aut
 
 Interrupteur **Activé** toujours visible en bas à gauche.
 
+## Comment la luminosité est choisie
+1. **Courbe** : lux → luminosité, en échelle logarithmique comme l'œil (nuit ~3 lux, pièce sombre ~30, salon ~200, près d'une fenêtre ~1500, plein jour 8000+), entre ton minimum et ton maximum.
+2. **Lissage** : plus clair = **vite** (pour lire tout de suite), plus sombre = **lentement** (une ombre qui passe n'assombrit pas l'écran). Petite zone morte (~12 % de lumière) pour éviter les micro-changements.
+3. **Transition douce** : petits pas toutes les 0,15 s au lieu de sauts.
+4. **Ajout** (curseur) : partout sur la courbe.
+
 ## Il apprend de toi
-Si tu changes la luminosité toi-même (touches Fn ou Windows), l'app **retient l'écart** : l'« ajout » change d'autant (ex. +10 %). Si un profil est actif, c'est le profil qui est mis à jour.
+Si tu changes la luminosité toi-même (touches Fn, Windows ou raccourcis), l'app **le retient pour ce niveau de lumière seulement** : régler dans le noir ne change pas le plein jour. La page Luminosité montre ta courbe, les points appris, et un bouton « Oublier ». Si un profil d'app est actif, c'est le profil qui est mis à jour.
 
 ## Raccourcis clavier (modifiables dans la page « Raccourcis »)
 | Raccourci | Action |

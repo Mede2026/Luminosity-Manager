@@ -253,20 +253,30 @@ input[type=range]:hover::-webkit-slider-thumb { box-shadow: inset 0 0 0 3px var(
 .lg-screen::before { background: var(--screen); }
 
 /* Courbe */
-#curve { width: 100%; height: 160px; display: block; }
-#curve .grid { stroke: var(--stroke); }
-#curve .zone { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: none; }
-#curve .line { stroke: var(--accent); stroke-width: 3; vector-effect: non-scaling-stroke; }
-#curve .base { stroke: var(--text3); stroke-width: 1.5; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
-.curve-axis { display: flex; justify-content: space-between; color: var(--text3); font-size: 11px; margin-top: 6px; }
+.curve-wrap { position: relative; height: 230px; }
+#curve { width: 100%; height: 100%; display: block; overflow: visible; }
+#curve .grid { stroke: var(--stroke); stroke-width: 1; }
+#curve .axis { fill: var(--text3); stroke: none; font-size: 11px; }
+#curve .zone { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: none; }
+#curve .line { stroke: var(--accent); stroke-width: 3; }
+#curve .base { stroke: var(--text3); stroke-width: 1.5; stroke-dasharray: 5 4; }
+#curve .learn { fill: var(--card); stroke: var(--accent); stroke-width: 2; }
+#curve .me { fill: var(--light); stroke: var(--card); stroke-width: 3; }
+#curve .me-line { stroke: var(--light); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.lg-base::before { background: var(--text3); }
+.here {
+  position: absolute; transform: translate(-50%, -135%); padding: 4px 9px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  background: var(--light); color: #000; white-space: nowrap; pointer-events: none;
+}
 
 /* Webcam */
 .cam-preview { display: flex; gap: 20px; align-items: center; }
 .cam-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-.cam-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cam-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .quality { font-size: 12px; color: var(--text2); padding: 8px 10px; border-radius: 6px; background: var(--hover); }
 .quality.good { color: var(--ok); }
 .quality.meh { color: var(--warn); }
+.row.disabled { opacity: .45; pointer-events: none; }
 
 /* Profils */
 .add-profile { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

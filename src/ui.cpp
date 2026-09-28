@@ -127,7 +127,22 @@ static void SendState() {
     j.Num(L"offset", g_offset);
     j.Num(L"min", g_min);
     j.Num(L"max", g_max);
-    j.Num(L"applied", g_detected < 0 ? -1 : Clamp(g_detected + g_offset, g_min, g_max));
+    j.Num(L"applied", g_applied);
+    j.Num(L"learnNow", g_learnNow);
+    j.Num(L"level", g_level / 1000.0);
+    j.Key(L"learn");
+    j.Raw(L"[");
+    for (int i = 0; i < LEARN_POINTS; i++) j.Raw(i ? L",%.1f" : L"%.1f", g_learn[i]);
+    j.Raw(L"]");
+    j.Bool(L"camLocked", g_camLocked);
+    j.Num(L"camLockValue", g_camLockValue == LONG_MIN ? g_camExposure : g_camLockValue);
+    j.Num(L"camExposure", g_camExposure == LONG_MIN ? 0 : g_camExposure);
+    j.Num(L"camExpMin", g_camExpMin);
+    j.Num(L"camExpMax", g_camExpMax);
+    j.Num(L"camExpStep", g_camExpStep);
+    j.Bool(L"camLogUnits", g_camLogUnits);
+    j.Bool(L"camManualOk", g_camManualOk);
+    j.Num(L"camClip", g_camClip);
     j.Num(L"ago", g_lastMeasure ? (double)((GetTickCount() - (DWORD)g_lastMeasure) / 1000) : -1);
     j.Num(L"camNext", g_camNext);
     j.Bool(L"useCam", g_useCam);
@@ -289,6 +304,10 @@ static void SendInit() {
     j.KStr(L"version", APP_VERSION);
     j.Bool(L"mica", g_mica);
     j.KStr(L"accent", accent);
+    j.Key(L"curve");                            // la courbe lux -> position, pour le dessin
+    j.Raw(L"[");
+    for (int i = 0; i < CURVE_POINTS; i++) j.Raw(i ? L",[%g,%g]" : L"[%g,%g]", CURVE[i][0], CURVE[i][1]);
+    j.Raw(L"]");
     Post(j);
     SendState();
     SendHist();
@@ -343,9 +362,10 @@ static void ToggleEnabled(bool on) {
     SendState();
 }
 
+// +/- 5 % : appris a ce niveau de lumiere (ou profil mis a jour, ou direct si l'app est desactivee)
 static void Nudge(int delta) {
-    if (g_enabled && g_profilePct < 0) SetOffset(g_offset + delta);   // mode auto : on decale la courbe
-    else { InterlockedExchangeAdd(&g_nudge, delta); SetEvent(g_wakeEvent); }
+    InterlockedExchangeAdd(&g_nudge, delta);
+    SetEvent(g_wakeEvent);
 }
 
 static void ShowMainWindow(const wchar_t *page = NULL) {
@@ -465,6 +485,27 @@ void OnPageMessage(const char *json) {
         SetEvent(g_wakeEvent);
     }
     else if (!wcscmp(cmd, L"listCameras")) SendCameras();
+    else if (!wcscmp(cmd, L"setCamLocked")) {
+        g_camLocked = value != 0;
+        if (g_camLocked && g_camLockValue == LONG_MIN) g_camLockValue = g_camExposure;   // part de l'actuelle
+        RegPut(L"CamLocked", g_camLocked);
+        RegPut(L"CamLockValue", (DWORD)g_camLockValue);
+        g_remeasure = 1;
+        SetEvent(g_wakeEvent);
+        SendState();
+    }
+    else if (!wcscmp(cmd, L"setCamExposure")) {
+        g_camLockValue = value;
+        RegPut(L"CamLockValue", (DWORD)value);
+        g_remeasure = 1;                         // nouvelle photo avec cette exposition
+        SetEvent(g_wakeEvent);
+        SendState();
+    }
+    else if (!wcscmp(cmd, L"resetLearning")) {
+        ResetLearning();
+        Notice(L"L'app a oublié ce qu'elle avait appris : retour à la courbe de base.");
+        SendState();
+    }
     else if (!wcscmp(cmd, L"calibrate")) {
         g_calibrate = 1;
         SetEvent(g_wakeEvent);
@@ -567,7 +608,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LEARNED: {
         wchar_t buf[160];
         if (lp) swprintf(buf, 160, L"Profil mis à jour : %ld %%", (long)g_profilePct);
-        else swprintf(buf, 160, L"Tu as changé la luminosité : c'est retenu (ajout %+ld %%).", (long)g_offset);
+        else swprintf(buf, 160, L"C'est retenu : %+d %% pour cette lumière (appris : %+ld %%).", (int)wp, (long)g_learnNow);
         Notice(buf);
         SendState();
         if (lp) SendProfiles();

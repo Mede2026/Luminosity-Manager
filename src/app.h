@@ -56,6 +56,18 @@ extern volatile LONG g_camQuality;               // 0 = exposition fixee, 1 = au
 extern volatile LONG g_camExposure;              // exposition utilisee a la derniere photo
 extern double g_camRef;                          // clarte de reference (= 300 lux)
 extern wchar_t g_camChoice[128];                 // camera choisie ("" = automatique)
+extern volatile LONG g_camLocked, g_camLockValue;  // exposition verrouillee par l'utilisateur
+extern volatile LONG g_camExpMin, g_camExpMax, g_camExpStep, g_camLogUnits, g_camManualOk;
+extern volatile LONG g_camClip;                  // derniere photo : 0 ok, 1 trop sombre, 2 trop claire
+extern volatile LONG g_level;                    // position sur la courbe 0..1000
+extern volatile LONG g_applied, g_learnNow;      // luminosite voulue ; ajout appris a ce niveau
+
+// La courbe lumiere -> luminosite, et ce que l'app a appris de toi
+static const int CURVE_POINTS = 11, LEARN_POINTS = 5;
+extern const double CURVE[CURVE_POINTS][2];      // { lux, position 0..1 }
+extern double g_learn[LEARN_POINTS];             // ajouts appris a 0 %, 25 %, 50 %, 75 %, 100 % de la courbe
+double CurveT(double lux);
+void ResetLearning();
 extern volatile LONG g_lat, g_lon;                // degres x100
 extern volatile LONG g_profilePct;                // -1 = aucun profil actif
 extern volatile LONG g_updateCheck;
@@ -93,12 +105,18 @@ void SetStartup(bool on);
 bool SensorReadLux(double *lux, bool retryNow);
 void SensorClose();
 static const int THUMB_W = 64, THUMB_H = 48;
-struct CamShot { int mean; bool hasExp, manual, logUnits; long exp, expDef; };
+struct CamShot {
+    int mean;                  // clarte moyenne de l'image (0..255)
+    double lin;                // lumiere reelle moyenne de l'image (0..1, sans gamma, lampes ignorees)
+    int clip;                  // 0 = bien exposee, 1 = trop sombre, 2 = trop claire
+    bool hasExp, manual, logUnits;
+    long exp, expDef, expMin, expMax, expStep;
+};
 extern BYTE g_thumb[THUMB_W * THUMB_H];          // miniature en gris de la derniere photo
 extern volatile LONG g_thumbValid;
 extern wchar_t g_camUsed[128];                   // camera reellement utilisee
 int ListCameras(wchar_t names[][128], int max);
-bool WebcamMeasure(const wchar_t *preferred, long *exposure, CamShot *out);
+bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, CamShot *out);
 double SunElevation(double lat, double lon);
 
 // brightness.cpp : luminosite des ecrans

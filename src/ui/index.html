@@ -65,7 +65,7 @@
           <div class="facts">
             <div class="fact"><span>Source</span><b id="source">—</b></div>
             <div class="fact"><span>Lumière</span><b id="light">—</b></div>
-            <div class="fact wide"><span>Détectée + ajout → écran</span><b id="calc">—</b></div>
+            <div class="fact wide"><span>Courbe + ajouts → écran</span><b id="calc">—</b></div>
           </div>
           <div class="actions">
             <button class="accent" id="btn-measure">Mesurer maintenant</button>
@@ -96,7 +96,7 @@
       <h1>Luminosité</h1>
       <div class="card group">
         <div class="row">
-          <div class="row-text"><b>Ajout à la luminosité détectée</b><small>Plus clair ou plus sombre que ce que l'app calcule. Change aussi tout seul quand tu règles la luminosité toi-même.</small></div>
+          <div class="row-text"><b>Ajout à la luminosité détectée</b><small>Plus clair ou plus sombre partout sur la courbe. (Quand tu règles la luminosité toi-même, l'app l'apprend seulement pour la lumière du moment : voir plus bas.)</small></div>
           <div class="row-ctl slider-ctl"><input type="range" id="offset" min="-50" max="50" step="1"><output id="offset-val">+0 %</output></div>
         </div>
         <div class="row">
@@ -109,9 +109,17 @@
         </div>
       </div>
       <div class="card curve-card">
-        <div class="card-head"><h2>Ta courbe</h2><small class="muted">Luminosité de l'écran selon la lumière de la pièce</small></div>
-        <svg id="curve" viewBox="0 0 600 180" preserveAspectRatio="none"></svg>
-        <div class="curve-axis"><span>Nuit</span><span>Pièce sombre</span><span>Pièce éclairée</span><span>Plein jour</span></div>
+        <div class="card-head"><h2>Ta courbe</h2><div class="legend"><span class="lg-screen">Ta luminosité</span><span class="lg-base">Sans tes réglages</span></div></div>
+        <div class="curve-wrap">
+          <svg id="curve"></svg>
+          <div class="here" id="here" hidden></div>
+        </div>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>Ce que l'app a appris</b><small id="learn-text">Quand tu changes la luminosité toi-même, l'app le retient pour ce niveau de lumière seulement.</small></div>
+          <div class="row-ctl"><button id="btn-forget">Oublier</button></div>
+        </div>
       </div>
       <div class="card group">
         <div class="row">
@@ -134,6 +142,7 @@
           <div class="cam-stats">
             <div class="fact"><span>Clarté de l'image</span><b id="cam-level">—</b></div>
             <div class="fact"><span>Lumière estimée</span><b id="cam-lux">—</b></div>
+            <div class="fact"><span>Exposition</span><b id="cam-exp">—</b></div>
             <div class="fact"><span>Prochaine photo</span><b id="cam-next">—</b></div>
           </div>
           <div class="quality" id="cam-quality"></div>
@@ -151,6 +160,14 @@
         <div class="row">
           <div class="row-text"><b>Une photo toutes les</b><small>De 5 secondes à 1 heure.</small></div>
           <div class="row-ctl"><div class="stepper" data-id="interval" data-min="5" data-max="3600" data-unit="s"></div></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Exposition verrouillée</b><small>Toujours la même exposition (temps de capture de la lumière). Sinon, l'app l'ajuste d'un cran quand l'image est trop noire ou trop blanche.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="camLocked"></div>
+        </div>
+        <div class="row" id="exp-row">
+          <div class="row-text"><b>Valeur de l'exposition</b><small id="exp-hint">À gauche = image plus sombre (plein jour), à droite = plus claire (pièce sombre).</small></div>
+          <div class="row-ctl slider-ctl"><input type="range" id="camExp"><output id="camExp-val">—</output></div>
         </div>
         <div class="row">
           <div class="row-text"><b>Calibrer</b><small>Dans une pièce éclairée normalement : cette lumière devient ta référence.</small></div>
