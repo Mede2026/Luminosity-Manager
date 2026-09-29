@@ -619,7 +619,62 @@ DWORD WINAPI Worker(LPVOID) {
 // ---------- Demarrage ----------
 HANDLE g_mutex;
 
+// « Desinstaller » depuis Parametres > Applications (LuminosityManager.exe --uninstall)
+static int UninstallCommand() {
+    UINT q = MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST;
+    if (MessageBoxW(NULL, L"Désinstaller Luminosity Manager ?", APP_NAME, q) != IDYES) return 0;
+    bool keep = MessageBoxW(NULL, L"Garder tes réglages et tes statistiques (utile si tu la réinstalles) ?",
+                            APP_NAME, q) == IDYES;
+    HWND other = FindWindowW(L"LuminosityManagerWnd", NULL);  // l'app tourne : on la ferme d'abord
+    if (other) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(other, &pid);
+        HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        PostMessageW(other, WM_QUIT_APP, 0, 0);
+        if (p) { WaitForSingleObject(p, 10000); CloseHandle(p); }
+    }
+    MessageBoxW(NULL, L"Luminosity Manager est désinstallée. Merci de l'avoir utilisée !", APP_NAME,
+                MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    UninstallApp(keep);                              // efface le dossier quelques secondes apres la fermeture
+    return 0;
+}
+
+// La fenetre existe : on previent l'ancienne version (mise a jour / installation) que tout va bien
+static void AfterStart(const wchar_t *cmdLine) {
+    HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, STARTED_EVENT);
+    if (ev) { SetEvent(ev); CloseHandle(ev); }
+    wchar_t exe[MAX_PATH], old[MAX_PATH + 8];            // nettoyage apres une mise a jour
+    GetModuleFileNameW(NULL, exe, MAX_PATH);
+    swprintf(old, MAX_PATH + 8, L"%ls.old", exe);
+    DeleteFileW(old);
+    RefreshUninstallEntry();                              // version a jour dans Parametres > Applications
+
+    wchar_t msg[300];
+    const wchar_t *inst = wcsstr(cmdLine, L"--installed \"");
+    if (inst) {
+        wchar_t path[MAX_PATH];
+        inst += 13;
+        int n = 0;
+        while (inst[n] && inst[n] != L'"' && n < MAX_PATH - 1) { path[n] = inst[n]; n++; }
+        path[n] = 0;
+        DeleteOldCopy(path);
+        StartNotice(L"Luminosity Manager est installée ✓ Tu la trouveras dans le menu Démarrer. "
+                    L"Le fichier téléchargé a été supprimé.", NULL, false);
+    } else if (wcsstr(cmdLine, L"--update-failed")) {
+        StartNotice(L"La nouvelle version n'a pas pu démarrer (Sécurité Windows l'a peut-être bloquée). "
+                    L"Ta version a été remise.", L"updates", true);
+    } else if (wcsstr(cmdLine, L"--install-failed")) {
+        StartNotice(L"L'app installée n'a pas pu démarrer (Sécurité Windows l'a peut-être bloquée). "
+                    L"L'app continue depuis ce dossier.", L"updates", true);
+    } else if (wcsstr(cmdLine, L"--updated")) {
+        swprintf(msg, 300, L"Luminosity Manager %ls est prête ✓", APP_VERSION);
+        StartNotice(msg, NULL, false);
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
+    if (wcsstr(cmdLine, L"--uninstall")) return UninstallCommand();
     g_mutex = CreateMutexW(NULL, TRUE, L"LuminosityManager_SingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         // deja lance : on affiche la fenetre existante
@@ -638,12 +693,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE,
                          NULL, EOAC_NONE, NULL);
     MFStartup(MF_VERSION, MFSTARTUP_LITE);           // pour lister les cameras dans la fenetre
-
-    // Nettoyage apres une mise a jour
-    wchar_t exe[MAX_PATH], old[MAX_PATH + 8];
-    GetModuleFileNameW(NULL, exe, MAX_PATH);
-    swprintf(old, MAX_PATH + 8, L"%ls.old", exe);
-    DeleteFileW(old);
 
     g_enabled = RegGet(L"Enabled", 1) ? 1 : 0;
     g_offset = (LONG)RegGet(L"Offset", 0);
@@ -688,6 +737,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
 
     // Lance au demarrage de Windows (--tray) : on reste discret pres de l'horloge
     if (!CreateMainWindow(inst, !wcsstr(cmdLine, L"--tray"), show)) return 1;
+    AfterStart(cmdLine);
 
     HANDLE th = CreateThread(NULL, 0, Worker, NULL, 0, NULL);
 

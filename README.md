@@ -1,11 +1,12 @@
 # Luminosity Manager
 
-Application Windows légère (**~460 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
+Application Windows légère (**~470 Ko**, installation en un clic, sans droits administrateur) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
 
 ## Utilisation
 1. Va dans **Releases** (à droite sur la page GitHub) et télécharge `LuminosityManager.exe`.
 2. Double-clique dessus : la fenêtre s'ouvre.
-3. La croix cache la fenêtre ; l'app continue près de l'horloge (icône ☀, grise quand l'app est désactivée). Clic gauche = rouvrir, clic droit = menu.
+3. Clique sur **Installer** (bandeau de l'accueil, ou page **Mises à jour**) : l'app est copiée dans `%LOCALAPPDATA%\Programs\LuminosityManager`, avec un raccourci dans le **menu Démarrer**. Le fichier téléchargé est ensuite supprimé. Pas besoin d'être administrateur.
+4. La croix cache la fenêtre ; l'app continue près de l'horloge (icône ☀, grise quand l'app est désactivée). Clic gauche = rouvrir, clic droit = menu.
 
 **Légère** : la fenêtre utilise WebView2 (le moteur d'Edge, déjà dans Windows 10/11). Il n'existe **que quand la fenêtre est ouverte** : fenêtre cachée = ~3 Mo de mémoire.
 
@@ -33,7 +34,7 @@ Application Windows légère (**~460 Ko**, aucune installation) qui ajuste **aut
 | Page | Contenu |
 |---|---|
 | **Accueil** | Jauge, état (actif / pause / profil), miniature webcam couleur, graphique 24 h, Mesurer, **Mode lecture**, Désactiver |
-| **Statistiques** | Aujourd'hui / 7 / 30 / 90 jours : temps actif, luminosité et lumière moyennes, écran économisé (Wh estimés), ajustements, photos, journée type, types de lumière, sources, apps… |
+| **Statistiques** | Aujourd'hui / 7 / 30 / 90 jours (gardées 120 jours, jamais effacées par erreur) : temps actif, luminosité et lumière moyennes, écran économisé (Wh estimés), ajustements, photos, journée type, types de lumière, sources, apps… |
 | **Luminosité** | Ajout −50 à +50 %, minimum / maximum, ta courbe (« Tu es ici », points appris), démarrage Windows |
 | **True Tone** | Couleur de la pièce → blanc de l'écran, activer, intensité |
 | **Énergie et jeux** | Économie d'énergie (sur batterie / économiseur Windows / jamais), luminosité en moins, pause pendant les jeux, écrans externes |
@@ -42,9 +43,9 @@ Application Windows légère (**~460 Ko**, aucune installation) qui ajuste **aut
 | **Raccourcis** | Clique puis appuie sur la nouvelle combinaison |
 | **Ville** | Automatique (d'après la connexion), recherche ou coordonnées |
 | **Sauvegarde** | Exporter / importer **toutes** les données (réglages, profils, apprentissage, historique, statistiques) |
-| **Mises à jour** | Vérifier, mettre à jour en un clic (empreinte SHA-256 vérifiée) |
+| **Mises à jour** | Vérifier, mettre à jour en un clic (empreinte SHA-256 vérifiée), installer / désinstaller, revenir à la version précédente, aide si Sécurité Windows bloque l'app |
 
-Interrupteur **Activé** toujours visible en bas à gauche.
+Interrupteur **Activé** toujours visible en bas à gauche. Fenêtre agrandie : le contenu prend **toute la largeur** (graphiques plus grands).
 
 ## Comment la luminosité est choisie
 1. **Courbe** : lux → luminosité, en échelle logarithmique comme l'œil (nuit ~3 lux, pièce sombre ~30, salon ~200, près d'une fenêtre ~1500, plein jour 8000+), entre ton minimum et ton maximum.
@@ -79,7 +80,21 @@ Si tu changes la luminosité toi-même (touches Fn, Windows ou raccourcis), l'ap
 | Ctrl + Alt + L | Mode lecture |
 
 ## Mises à jour
-L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Mettre à jour » télécharge la nouvelle version, **vérifie son empreinte SHA-256** (publiée avec la Release), la met à la place de l'ancienne et la relance.
+L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Mettre à jour » :
+1. télécharge la nouvelle version et **vérifie son empreinte SHA-256** (publiée avec la Release) ;
+2. garde une **copie de secours** de ta version (`%LOCALAPPDATA%\LuminosityManager\backup`) ;
+3. attend 3 s et vérifie que **Sécurité Windows** n'a pas effacé le nouveau fichier ; sinon, ta version est gardée ;
+4. met la nouvelle version en place et la lance. Si elle n'ouvre pas sa fenêtre dans les **20 s**, l'ancienne version est **remise toute seule**.
+
+Bouton **« Revenir à la version précédente »** (page Mises à jour) : remet la copie de secours.
+
+## Désinstaller
+Page **Mises à jour → Désinstaller**, ou **Paramètres Windows → Applications → Luminosity Manager → Désinstaller**. Tu choisis de garder ou d'effacer tes réglages et statistiques.
+
+## Si Sécurité Windows bloque l'app
+L'app n'est pas signée (un certificat coûte cher). Microsoft Defender la prend parfois pour un virus (par exemple `Trojan:Win32/Bearfoos.A!ml`). Le `!ml` veut dire que c'est une **devinette automatique**, pas un vrai virus connu : c'est un **faux positif**.
+- **Récupérer l'app** : Sécurité Windows → Protection contre les virus et menaces → **Historique de protection** → clique sur le blocage → **Actions → Restaurer**. Ou retélécharge-la dans les Releases.
+- **Signaler l'erreur** : [microsoft.com/wdsi/filesubmission](https://www.microsoft.com/wdsi/filesubmission) → « Fichier incorrectement détecté ».
 
 ## Écrans compatibles
 - Écran de portable : via WMI (Windows).
@@ -91,7 +106,7 @@ L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Met
 - C++ ↔ page : messages JSON (`PostWebMessageAsJson` / `chrome.webview.postMessage`).
 - `src/webview2/WebView2.h` : généré avec `widl` depuis l'IDL officiel du SDK WebView2 (licence dans ce dossier).
 - Calculs purs (courbe, apprentissage, soleil, couleurs…) : `src/core.cpp`, testés par `tests/` (`./tests/run.sh`). GitHub lance les tests à chaque envoi, et avant chaque Release.
-- Statistiques : `src/stats.cpp` ; sauvegarde : `src/backup.cpp`.
+- Statistiques : `src/stats.cpp` ; sauvegarde : `src/backup.cpp` ; installation, copie de secours, retour arrière, désinstallation : `src/install.cpp`.
 - Compiler : `./build.sh` (MinGW-w64). La version vient du fichier `VERSION`.
 - Icônes : `python3 src/make_icon.py`.
 - Police : [Inter](https://rsms.me/inter/) (licence SIL OFL 1.1, voir `src/ui/fonts/`), intégrée dans l'app.

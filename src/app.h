@@ -35,9 +35,11 @@
 #define WM_UPDATE        (WM_APP + 2)   // nouvelle mesure (chaque seconde)
 #define WM_NOSENSOR      (WM_APP + 3)
 #define WM_UPDATE_FOUND  (WM_APP + 4)   // wParam : 1 = nouvelle version, 0 = a jour, 2 = erreur
-#define WM_UPDATE_READY  (WM_APP + 5)   // wParam : 1 = nouveau .exe en place, 0 = echec
+#define WM_UPDATE_READY  (WM_APP + 5)   // wParam : 1 = nouveau .exe en place, 0 = echec, 2 = bloque par Securite Windows
 #define WM_CITY_FOUND    (WM_APP + 6)   // wParam : 1 = trouvee
 #define WM_LEARNED       (WM_APP + 7)   // wParam : ecart appris (luminosite changee a la main)
+#define WM_QUIT_APP      (WM_APP + 8)   // quitter (demande par le desinstalleur)
+#define STARTED_EVENT    L"Local\\LuminosityManager_Started"   // la nouvelle version a bien demarre
 
 enum { SRC_SENSOR, SRC_CAMERA, SRC_SUN };
 enum { HK_UP, HK_DOWN, HK_MEASURE, HK_TOGGLE, HK_READ, HK_COUNT };
@@ -180,6 +182,22 @@ void StartUpdateDownload();
 void StartCitySearch(const wchar_t *city);
 void StartLocate();                              // position automatique (d'apres la connexion internet)
 bool LaunchUpdatedAndExit();
+enum { LAUNCH_PLAIN, LAUNCH_UPDATE, LAUNCH_INSTALL };  // si la nouvelle app ne demarre pas : rien / remettre l'ancienne / relancer celle-ci
+void RequestLaunch(const wchar_t *path, const wchar_t *args, int mode);
+
+// install.cpp : installation, copie de secours, retour arriere, desinstallation
+bool InstallDir(wchar_t *dir);                   // %LOCALAPPDATA%\Programs\LuminosityManager
+bool IsInstalled();                              // l'app tourne depuis ce dossier
+bool InstallApp(wchar_t *target, wchar_t *msg, int n);
+void UninstallApp(bool keepData);
+void RefreshUninstallEntry();
+bool BackupCurrent();
+bool BackupFind(wchar_t *version, int vn, wchar_t *path);
+bool SwapInExe(const wchar_t *newFile);
+bool RestorePrevious();
+bool RollbackPrepare(wchar_t *msg, int n);
+bool ExeStillThere(const wchar_t *path, DWORD expectedSize);
+void DeleteOldCopy(const wchar_t *path);
 
 // json.cpp : lire / ecrire du JSON simple
 bool JsonString(const char *src, const char *key, wchar_t *out, int n);
@@ -213,6 +231,7 @@ bool CreateMainWindow(HINSTANCE inst, bool showWindow, int show);
 void RegisterHotkeys();
 extern WORD g_hotkeys[HK_COUNT];
 extern HANDLE g_mutex;
+void StartNotice(const wchar_t *text, const wchar_t *page, bool balloon);
 
 // main.cpp
 DWORD WINAPI Worker(LPVOID);

@@ -58,6 +58,12 @@
     <!-- ACCUEIL -->
     <section class="page active" id="page-home">
       <h1>Accueil</h1>
+      <div class="card banner" id="install-banner" hidden>
+        <svg class="banner-icon"><use href="#i-save"/></svg>
+        <div class="banner-text"><b>Installer Luminosity Manager</b><small>L'app sera rangée dans son propre dossier, avec un raccourci dans le menu Démarrer. Les mises à jour seront plus sûres. Pas besoin d'être administrateur.</small></div>
+        <button class="accent" data-install>Installer</button>
+        <button id="btn-install-later">Plus tard</button>
+      </div>
       <div class="hero card">
         <div class="gauge">
           <svg viewBox="0 0 120 120">
@@ -116,12 +122,11 @@
         <div class="card"><div class="card-head"><h2>Lumière moyenne par jour</h2><small class="muted">lux</small></div><div class="bars" id="chart-days-lux"></div></div>
         <div class="card wide"><div class="card-head"><h2>Ta journée type</h2><small class="muted">luminosité moyenne de l'écran selon l'heure (depuis le début)</small></div><div class="bars" id="chart-hours"></div></div>
         <div class="card wide"><div class="card-head"><h2>La lumière de ta pièce</h2><small class="muted">temps passé dans chaque type de lumière</small></div><div id="chart-cats"></div></div>
-        <div class="card"><div class="card-head"><h2>Ton temps</h2></div><div class="hbars" id="chart-time"></div></div>
-        <div class="card"><div class="card-head"><h2>Comment la lumière a été mesurée</h2></div><div class="hbars" id="chart-src"></div></div>
-        <div class="card"><div class="card-head"><h2>Apps avec un profil</h2></div><div class="hbars" id="chart-apps"></div></div>
-        <div class="card"><div class="card-head"><h2>Depuis le début</h2><small class="muted" id="stats-since"></small></div><div class="totals" id="stats-totals"></div></div>
+        <div class="card sm"><div class="card-head"><h2>Ton temps</h2></div><div class="hbars" id="chart-time"></div></div>
+        <div class="card sm"><div class="card-head"><h2>Comment la lumière a été mesurée</h2></div><div class="hbars" id="chart-src"></div></div>
+        <div class="card sm"><div class="card-head"><h2>Apps avec un profil</h2></div><div class="hbars" id="chart-apps"></div></div>
+        <div class="card sm"><div class="card-head"><h2>Depuis le début</h2><small class="muted" id="stats-since"></small></div><div class="totals" id="stats-totals"></div></div>
       </div>
-      <div class="row-end"><button id="btn-stats-reset">Remettre les statistiques à zéro</button></div>
     </section>
 
     <!-- LUMINOSITE -->
@@ -361,10 +366,28 @@
           <div class="row-text"><b>Vérifier automatiquement</b><small>Une fois par jour, sur GitHub.</small></div>
           <div class="row-ctl"><input type="checkbox" class="switch" id="updateCheck"></div>
         </div>
+        <div class="row">
+          <div class="row-text"><b>Installation</b><small id="install-status"></small></div>
+          <div class="row-ctl"><button data-install id="btn-install">Installer</button><button id="btn-uninstall" hidden>Désinstaller</button></div>
+        </div>
+        <div class="row" id="row-rollback" hidden>
+          <div class="row-text"><b>Revenir à la version précédente</b><small id="rollback-text">Une copie de secours est gardée à chaque mise à jour.</small></div>
+          <div class="row-ctl"><button id="btn-rollback">Revenir</button></div>
+        </div>
         <div class="row link" id="btn-repo">
           <div class="row-text"><b>Page GitHub du projet</b><small>github.com/Mede2026/Luminosity-Manager</small></div>
           <div class="row-ctl chevron">›</div>
         </div>
+      </div>
+      <div class="card info" id="defender-help">
+        <b>Si Sécurité Windows bloque l'app</b>
+        <p class="muted">L'app n'est pas signée (un certificat coûte cher) : Sécurité Windows la prend parfois pour un virus, par erreur. C'est un <b>faux positif</b>.</p>
+        <ul>
+          <li><b>Récupérer l'app</b> : Sécurité Windows → Protection contre les virus et menaces → <b>Historique de protection</b> → clique sur le blocage → <b>Actions → Restaurer</b>. Ou retélécharge-la sur GitHub.</li>
+          <li><b>Signaler l'erreur à Microsoft</b> : envoie le fichier comme « fichier incorrectement détecté ». C'est corrigé en général en quelques jours.</li>
+          <li>Avant chaque mise à jour, l'app garde une <b>copie de secours</b>. Si la nouvelle version est bloquée, l'ancienne est remise toute seule.</li>
+        </ul>
+        <div class="actions" style="margin-top:12px"><button id="btn-open-history">Ouvrir l'historique de protection</button><button id="btn-open-report">Signaler à Microsoft</button></div>
       </div>
     </section>
   </main>

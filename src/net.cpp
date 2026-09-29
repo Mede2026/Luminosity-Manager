@@ -12,7 +12,7 @@ wchar_t g_cityResult[160];
 static wchar_t g_newUrl[512];
 static volatile LONG g_busy;          // une seule mise a jour a la fois
 static volatile LONG g_cityBusy;
-static bool g_launchNew;
+static bool g_launchNew;          // relancer une app en quittant (RequestLaunch)
 
 // Telecharge une adresse HTTPS en memoire (redirections suivies). A liberer avec free().
 // Si location est donne : redirections desactivees, on renvoie l'adresse de la redirection (en-tete Location).
@@ -112,7 +112,6 @@ void StartUpdateCheck() {
     if (t) CloseHandle(t); else g_busy = 0;
 }
 
-// Telecharge le nouveau .exe, le met a la place de l'actuel (l'actuel devient .old).
 // Empreinte SHA-256 (64 caracteres hexa) calculee par Windows (BCrypt)
 static bool Sha256Hex(const void *data, DWORD len, char out[65]) {
     BCRYPT_ALG_HANDLE alg = NULL;
@@ -144,26 +143,29 @@ static DWORD WINAPI UpdateDownloadThread(LPVOID) {
     if (HttpGet(g_newUrl, &bin, &len, 16 * 1024 * 1024)) {
         // vrai programme Windows ET empreinte SHA-256 identique a celle publiee
         if (len > 10 * 1024 && bin[0] == 'M' && bin[1] == 'Z' && VerifyDownload(bin, len)) {
-            wchar_t exe[MAX_PATH], tmp[MAX_PATH + 8], old[MAX_PATH + 8];
+            wchar_t exe[MAX_PATH], tmp[MAX_PATH + 8];
             GetModuleFileNameW(NULL, exe, MAX_PATH);
             swprintf(tmp, MAX_PATH + 8, L"%ls.new", exe);
-            swprintf(old, MAX_PATH + 8, L"%ls.old", exe);
+            BackupCurrent();                         // copie de secours de la version actuelle
             HANDLE f = CreateFileW(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
             if (f != INVALID_HANDLE_VALUE) {
                 DWORD put = 0;
                 BOOL w = WriteFile(f, bin, len, &put, NULL) && put == len;
                 CloseHandle(f);
-                if (w && MoveFileExW(exe, old, MOVEFILE_REPLACE_EXISTING)) {
-                    if (MoveFileExW(tmp, exe, MOVEFILE_REPLACE_EXISTING)) ok = 1;
-                    else MoveFileExW(old, exe, MOVEFILE_REPLACE_EXISTING);   // on remet l'ancien
+                if (w) {
+                    // Securite Windows analyse le nouveau fichier : on lui laisse le temps avant de l'utiliser.
+                    // S'il l'a efface ou bloque, on garde la version actuelle.
+                    Sleep(3000);
+                    if (!ExeStillThere(tmp, len)) ok = 2;
+                    else if (SwapInExe(tmp)) ok = 1;
                 }
-                if (!ok) DeleteFileW(tmp);
+                if (ok != 1) DeleteFileW(tmp);
             }
         }
         free(bin);
     }
     InterlockedExchange(&g_busy, 0);
-    if (ok) g_launchNew = true;
+    if (ok == 1) RequestLaunch(NULL, L"--updated", LAUNCH_UPDATE);
     PostMessageW(g_hwnd, WM_UPDATE_READY, ok, 0);
     return 0;
 }
@@ -174,15 +176,51 @@ void StartUpdateDownload() {
     if (t) CloseHandle(t); else g_busy = 0;
 }
 
-void RequestRestart() { g_launchNew = true; }
+// ---------- Relancer l'app en quittant (mise a jour, installation, import) ----------
+static wchar_t g_launchPath[MAX_PATH], g_launchArgs[MAX_PATH + 32];
+static int g_launchMode;
 
-// Appele a la fermeture : relance la nouvelle version si elle vient d'etre installee (ou apres un import).
+void RequestLaunch(const wchar_t *path, const wchar_t *args, int mode) {
+    if (path) wcsncpy(g_launchPath, path, MAX_PATH - 1);
+    else GetModuleFileNameW(NULL, g_launchPath, MAX_PATH);
+    wcsncpy(g_launchArgs, args ? args : L"", MAX_PATH + 31);
+    g_launchMode = mode;
+    g_launchNew = true;
+}
+
+void RequestRestart() { RequestLaunch(NULL, NULL, LAUNCH_PLAIN); }
+
+// Appele a la fermeture. Pour une mise a jour ou une installation, on attend (20 s max) que la nouvelle app
+// ouvre sa fenetre. Si elle ne demarre pas (bloquee par Securite Windows...), on remet l'ancienne version.
 bool LaunchUpdatedAndExit() {
     if (!g_launchNew) return false;
     if (g_mutex) { ReleaseMutex(g_mutex); CloseHandle(g_mutex); g_mutex = NULL; }
+    HANDLE started = g_launchMode != LAUNCH_PLAIN ? CreateEventW(NULL, TRUE, FALSE, STARTED_EVENT) : NULL;
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    sei.lpFile = g_launchPath;
+    sei.lpParameters = g_launchArgs[0] ? g_launchArgs : NULL;
+    sei.nShow = SW_SHOWNORMAL;
+    bool ok = ShellExecuteExW(&sei) != 0;
+    if (ok && started && sei.hProcess) {
+        HANDLE both[2] = { started, sei.hProcess };
+        ok = WaitForMultipleObjects(2, both, FALSE, 20000) == WAIT_OBJECT_0;
+        if (!ok) {
+            TerminateProcess(sei.hProcess, 1);
+            WaitForSingleObject(sei.hProcess, 3000);
+        }
+    }
+    if (sei.hProcess) CloseHandle(sei.hProcess);
+    if (started) CloseHandle(started);
+    if (ok || g_launchMode == LAUNCH_PLAIN) return ok;
+
+    // Echec : on revient a ce qui marchait
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(NULL, exe, MAX_PATH);
-    return (INT_PTR)ShellExecuteW(NULL, L"open", exe, NULL, NULL, SW_SHOWNORMAL) > 32;
+    if (g_launchMode == LAUNCH_UPDATE && !RestorePrevious()) return false;
+    const wchar_t *flag = g_launchMode == LAUNCH_UPDATE ? L"--update-failed" : L"--install-failed";
+    return (INT_PTR)ShellExecuteW(NULL, L"open", exe, flag, NULL, SW_SHOWNORMAL) > 32;
 }
 
 // ---------- Recherche de ville ----------

@@ -563,7 +563,6 @@ $('external').onchange = (e) => send('setExternal', { value: e.target.checked ? 
 $('btn-locate').onclick = () => { $('city-coords').textContent = 'Recherche de ta position…'; send('locate'); };
 $('btn-export').onclick = () => send('exportData');
 $('btn-import').onclick = () => send('importData');
-$('btn-stats-reset').onclick = () => { if (confirm('Effacer toutes les statistiques ?')) send('resetStats'); };
 
 $('btn-city').onclick = () => {
   const text = $('city').value.trim();
@@ -585,6 +584,16 @@ $('updateCheck').onchange = (e) => send('setUpdateCheck', { value: e.target.chec
 $('btn-check').onclick = () => send('checkUpdate');
 $('btn-update').onclick = () => send('doUpdate');
 $('btn-repo').onclick = () => send('openRepo');
+document.querySelectorAll('[data-install]').forEach((b) => { b.onclick = () => { toast('Installation…'); send('install'); }; });
+$('btn-install-later').onclick = () => send('installLater');
+$('btn-uninstall').onclick = () => {
+  if (!confirm('Désinstaller Luminosity Manager ?')) return;
+  const keep = confirm('Garder tes réglages et tes statistiques (utile si tu la réinstalles) ?\n\nOK = garder · Annuler = tout effacer');
+  send('uninstall', { value: keep ? 1 : 0 });
+};
+$('btn-rollback').onclick = () => { if (confirm($('btn-rollback').dataset.msg)) send('rollback'); };
+$('btn-open-history').onclick = () => send('openSecurity');
+$('btn-open-report').onclick = () => send('openReport');
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 setRange($('p-pct'), 100);
 
@@ -858,6 +867,7 @@ function onMessage(m) {
         error: 'Impossible de vérifier (pas d\'internet ?).',
         downloading: 'Téléchargement de ' + m.version + '… L\'app va redémarrer.',
         failed: 'Échec de la mise à jour. Réessaie plus tard.',
+        blocked: 'Sécurité Windows a bloqué la nouvelle version. Ta version actuelle est gardée (voir plus bas).',
       };
       $('upd-title').textContent = 'Luminosity Manager ' + m.current;
       $('upd-status').textContent = st[m.status] || '';
@@ -865,6 +875,14 @@ function onMessage(m) {
       $('btn-update').textContent = 'Mettre à jour vers ' + m.version;
       $('btn-check').disabled = m.status === 'checking' || m.status === 'downloading';
       $('upd-dot').hidden = m.status !== 'available';
+      $('install-status').textContent = m.installed ? 'Installée dans ' + m.installDir + '. Raccourci dans le menu Démarrer.'
+        : 'Pas installée : l\'app tourne depuis le fichier téléchargé.';
+      $('btn-install').hidden = m.installed;
+      $('btn-uninstall').hidden = !m.installed;
+      $('install-banner').hidden = m.installed || m.installLater;
+      $('row-rollback').hidden = !m.backup;
+      $('rollback-text').textContent = 'Remettre la version ' + m.backup + ' (copie de secours gardée avant la dernière mise à jour).';
+      $('btn-rollback').dataset.msg = 'Revenir à la version ' + m.backup + ' ? L\'app va redémarrer.';
       break;
     }
     case 'hotkeys':
@@ -907,7 +925,7 @@ function demo() {
   onMessage({ type: 'profiles', list: [{ exe: 'LumaFusion.exe', pct: 100 }, { exe: 'rekordbox.exe', pct: 70 }, { exe: 'GeometryDash.exe', pct: 0 }] });
   onMessage({ type: 'cameras', list: ['Integrated Camera', 'Integrated IR Camera'], choice: '' });
   onMessage({ type: 'city', ok: true, searched: false, name: 'Boucherville, Québec, Canada', lat: 45.59, lon: -73.44 });
-  onMessage({ type: 'update', status: 'latest', version: '', current: '0.4' });
+  onMessage({ type: 'update', status: 'latest', version: '', current: '0.4', backup: '0.3', installed: false, installLater: false, installDir: 'C:\\Users\\toi\\AppData\\Local\\Programs\\LuminosityManager' });
   onMessage({ type: 'hotkeys', list: [{ vk: 38, mods: 6 }, { vk: 40, mods: 6 }, { vk: 77, mods: 6 }, { vk: 65, mods: 6 }, { vk: 76, mods: 6 }] });
   const w = 160, h = 120;
   let px = '';

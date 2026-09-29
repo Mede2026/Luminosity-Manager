@@ -31,6 +31,7 @@ static LONG g_sentHist = -1, g_sentThumb = -1;
 static wchar_t g_pendingPage[16];
 static const wchar_t *g_updStatus = L"";
 static wchar_t g_notifiedVersion[32];
+static wchar_t g_startNotice[300];      // message a afficher quand la page est prete (apres une mise a jour...)
 
 static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -289,6 +290,13 @@ static void SendUpdate() {
     j.KStr(L"status", g_updStatus);
     j.KStr(L"version", g_newVersion);
     j.KStr(L"current", APP_VERSION);
+    wchar_t backup[32] = L"", dir[MAX_PATH] = L"";
+    if (BackupFind(backup, 32, NULL) && !wcscmp(backup, APP_VERSION)) backup[0] = 0;   // meme version : inutile
+    j.KStr(L"backup", backup);
+    j.Bool(L"installed", IsInstalled());
+    j.Bool(L"installLater", RegGet(L"InstallLater", 0) != 0);
+    InstallDir(dir);
+    j.KStr(L"installDir", dir);
     Post(j);
 }
 
@@ -360,6 +368,10 @@ static void SendInit() {
         n.KStr(L"page", g_pendingPage);
         Post(n);
         g_pendingPage[0] = 0;
+    }
+    if (g_startNotice[0]) {
+        Notice(g_startNotice);
+        g_startNotice[0] = 0;
     }
 }
 
@@ -560,7 +572,6 @@ void OnPageMessage(const char *json) {
     else if (!wcscmp(cmd, L"setBatteryCut"))  { g_batteryCut = Clamp(value, 0, 50); RegPut(L"BatteryCut", g_batteryCut); SetEvent(g_wakeEvent); SendState(); }
     else if (!wcscmp(cmd, L"setExternal"))    { g_externalBrightness = value != 0; RegPut(L"ExternalBrightness", g_externalBrightness); SendState(); }
     else if (!wcscmp(cmd, L"getStats"))       SendStats();
-    else if (!wcscmp(cmd, L"resetStats"))     { StatsReset(); SendStats(); Notice(L"Statistiques remises à zéro."); }
     else if (!wcscmp(cmd, L"locate"))         StartLocate();
     else if (!wcscmp(cmd, L"exportData")) {
         wchar_t msg[300];
@@ -624,8 +635,26 @@ void OnPageMessage(const char *json) {
     }
     else if (!wcscmp(cmd, L"setUpdateCheck")) { g_updateCheck = value != 0; RegPut(L"UpdateCheck", g_updateCheck); SendState(); }
     else if (!wcscmp(cmd, L"checkUpdate")) { g_updStatus = L"checking"; SendUpdate(); StartUpdateCheck(); }
+    else if (!wcscmp(cmd, L"install")) {
+        wchar_t target[MAX_PATH], msg[200], exe[MAX_PATH], args[MAX_PATH + 32];
+        if (InstallApp(target, msg, 200)) {
+            GetModuleFileNameW(NULL, exe, MAX_PATH);
+            swprintf(args, MAX_PATH + 32, L"--installed \"%ls\"", exe);   // la copie installee efface celle-ci
+            RequestLaunch(target, args, LAUNCH_INSTALL);
+            DestroyWindow(g_hwnd);
+        } else { Notice(msg); SendUpdate(); }
+    }
+    else if (!wcscmp(cmd, L"installLater"))  { RegPut(L"InstallLater", 1); SendUpdate(); }
+    else if (!wcscmp(cmd, L"uninstall"))     { UninstallApp(value != 0); DestroyWindow(g_hwnd); }
+    else if (!wcscmp(cmd, L"rollback")) {
+        wchar_t msg[200];
+        if (RollbackPrepare(msg, 200)) { RequestLaunch(NULL, L"--updated", LAUNCH_UPDATE); DestroyWindow(g_hwnd); }
+        else Notice(msg);
+    }
     else if (!wcscmp(cmd, L"doUpdate"))    { g_updStatus = L"downloading"; SendUpdate(); StartUpdateDownload(); }
     else if (!wcscmp(cmd, L"openRepo"))    ShellExecuteW(NULL, L"open", L"https://github.com/" REPO, NULL, NULL, SW_SHOWNORMAL);
+    else if (!wcscmp(cmd, L"openSecurity")) ShellExecuteW(NULL, L"open", L"windowsdefender://history", NULL, NULL, SW_SHOWNORMAL);
+    else if (!wcscmp(cmd, L"openReport"))   ShellExecuteW(NULL, L"open", L"https://www.microsoft.com/wdsi/filesubmission", NULL, NULL, SW_SHOWNORMAL);
     else if (!wcscmp(cmd, L"hide"))        HideMainWindow();
     else if (!wcscmp(cmd, L"quit"))        DestroyWindow(g_hwnd);
 }
@@ -718,8 +747,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         SendUpdate();
         return 0;
     case WM_UPDATE_READY:
-        if (wp) DestroyWindow(h);                // la nouvelle version se lance a la fermeture
-        else { g_updStatus = L"failed"; SendUpdate(); }
+        if (wp == 1) DestroyWindow(h);           // la nouvelle version se lance a la fermeture
+        else {
+            g_updStatus = wp == 2 ? L"blocked" : L"failed";
+            if (wp == 2) Balloon(L"Sécurité Windows a bloqué la mise à jour. Ta version actuelle est gardée.");
+            SendUpdate();
+        }
         return 0;
     case WM_CITY_FOUND:
         if (wp) SetEvent(g_wakeEvent);
@@ -799,6 +832,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case ID_QUIT:     DestroyWindow(h); break;
         }
         return 0;
+    case WM_QUIT_APP:                            // le desinstalleur ferme l'app
+        DestroyWindow(h);
+        return 0;
     case WM_CLOSE:                               // la croix cache la fenetre, l'app reste pres de l'horloge
         HideMainWindow();
         return 0;
@@ -874,4 +910,12 @@ bool CreateMainWindow(HINSTANCE inst, bool showWindow, int) {
 
     if (showWindow) ShowMainWindow();
     return true;
+}
+
+// Message a montrer au demarrage (apres une mise a jour, une installation...), avec une page a ouvrir
+void StartNotice(const wchar_t *text, const wchar_t *page, bool balloon) {
+    wcsncpy(g_startNotice, text, 299);
+    g_startNotice[299] = 0;
+    if (page) wcsncpy(g_pendingPage, page, 15);
+    if (balloon) Balloon(text);
 }
