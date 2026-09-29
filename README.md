@@ -62,6 +62,7 @@ Le blanc de l'écran s'adapte à la **couleur** de la lumière de la pièce : pl
 ## Jeux, pauses et économie d'énergie
 - **Jeux** : en plein écran (jeux, vidéos) ou pour une app marquée « 🎮 Jeu », l'app se désactive et les couleurs redeviennent normales (réglable).
 - **Pause** quand l'ordi est verrouillé, en veille ou écran éteint : aucune photo webcam.
+- **Au réveil** (sortie de veille, déverrouillage, écran rallumé, fin d'un jeu) : nouvelle mesure **tout de suite**, appliquée sans transition. Si la webcam n'est pas encore prête, l'app réessaie toutes les 2 s.
 - **Économie d'énergie** (sur batterie, ou seulement avec l'économiseur de Windows) : écran plus sombre (−10 % réglable, −5 % de plus avec l'économiseur), 4× moins de photos webcam, transitions plus simples.
 - **Mode lecture** (bouton, menu ou Ctrl+Alt+L) : écran 30 % plus sombre et chaud (3800 K).
 

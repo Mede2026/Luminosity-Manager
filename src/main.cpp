@@ -352,7 +352,8 @@ DWORD WINAPI Worker(LPVOID) {
     LONG lastPostedBright = -2, lastPostedLux = -2;
     LONG lastHistMinute = 0, seenSeq = g_osBrightSeq;
     DWORD lastTick = 0, lastPoll = 0, lastSetTick = 0, lastFsCheck = 0, lastBusyCheck = 0;
-    bool notified = false, fullscreen = false, camBusy = false;
+    bool notified = false, fullscreen = false, camBusy = false, wasPaused = false;
+    int camFails = 0;        // photos ratees de suite (la webcam met parfois quelques secondes a se reveiller)
     double ambMired = -1;    // couleur de la piece lissee (en "mired" = 1 000 000 / Kelvin, comme l'oeil la percoit)
     double dispMired = 1e6 / 6500, appliedMired = 1e6 / 6500;
     bool colorChanged = false;
@@ -404,6 +405,10 @@ DWORD WINAPI Worker(LPVOID) {
             int pause = g_suspended ? PAUSE_SLEEP : g_locked ? PAUSE_LOCKED : g_displayOff ? PAUSE_SCREEN_OFF
                       : profile == 0 ? PAUSE_GAME : fullscreen ? PAUSE_FULLSCREEN : PAUSE_NONE;
             g_pauseReason = pause;
+            // Fin d'une pause (reveil, deverrouillage, ecran rallume, fin du jeu, app reactivee) :
+            // nouvelle mesure tout de suite, appliquee sans transition
+            if (pause || !g_enabled) wasPaused = true;
+            else if (wasPaused) { wasPaused = false; force = true; g_remeasure = 1; camFails = 0; }
 
             // App desactivee ou en pause : on ne touche a rien (sauf les raccourcis +/-), pas de camera.
             // Pendant un jeu, les couleurs redeviennent normales (les vraies couleurs du jeu).
@@ -448,6 +453,9 @@ DWORD WINAPI Worker(LPVOID) {
                                 g_source = SRC_CAMERA;
                                 g_lastMeasure = (LONG)GetTickCount();
                                 StatsEvent(STAT_PHOTO);
+                                camFails = 0;
+                            } else if (camLux >= 0 && ++camFails <= 5) {
+                                camDue = GetTickCount() + 2000;   // webcam pas encore prete : on garde la derniere mesure
                             } else {
                                 g_source = SRC_SUN;
                                 camLux = -1;

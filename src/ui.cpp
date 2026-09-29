@@ -740,7 +740,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 SetEvent(g_wakeEvent);
             } else if (IsEqualGUID(ps->PowerSetting, GUID_CONSOLE_DISPLAY_STATE)) {
                 g_displayOff = v != 1;               // 0 eteint, 1 allume, 2 attenue
-                if (v == 1) { g_force = 1; SetEvent(g_wakeEvent); }
+                if (v == 1) { g_suspended = 0; g_force = 1; SetEvent(g_wakeEvent); }   // ecran rallume = reveille
             } else if (IsEqualGUID(ps->PowerSetting, GUID_ACDC_POWER_SOURCE)) {
                 g_onBattery = v != 0;                // 0 = branche
                 SetEvent(g_wakeEvent);
@@ -752,7 +752,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return TRUE;
     case WM_WTSSESSION_CHANGE:                   // ordi verrouille / deverrouille
         if (wp == WTS_SESSION_LOCK) g_locked = 1;
-        else if (wp == WTS_SESSION_UNLOCK) { g_locked = 0; g_force = 1; SetEvent(g_wakeEvent); }
+        else if (wp == WTS_SESSION_UNLOCK) { g_locked = 0; g_suspended = 0; g_force = 1; SetEvent(g_wakeEvent); }
         return 0;
     case WM_DISPLAYCHANGE:                       // ecran branche / debranche
         BrightnessDisplaysChanged();
