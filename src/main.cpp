@@ -48,6 +48,10 @@ volatile LONG g_osBright = -1, g_osBrightSeq = 0;
 volatile LONG g_externalBrightness = 1;
 volatile LONG g_ecoActive = 0;
 volatile LONG g_uiVisible = 0;
+volatile LONG g_idlePause = 1;    // pas de photo quand personne n'est devant l'ordi
+volatile LONG g_idleArmed = 0;    // la fenetre ecoute la souris (pour reprendre des qu'elle bouge)
+wchar_t g_fgExe[64];              // app au premier plan (mise a jour par Windows, voir ForegroundChanged)
+volatile LONG g_fgSeq = 0;
 wchar_t g_camChoice[128];
 volatile LONG g_lat = 4559, g_lon = -7344;   // Boucherville
 volatile LONG g_profilePct = -1;
@@ -141,7 +145,7 @@ void SaveProfiles() {
 }
 
 // Nom du .exe de l'application au premier plan ("" si c'est nous ou inconnu)
-static void ForegroundExe(wchar_t *out, int n) {
+void ForegroundExe(wchar_t *out, int n) {
     out[0] = 0;
     HWND w = GetForegroundWindow();
     DWORD pid = 0;
@@ -159,11 +163,22 @@ static void ForegroundExe(wchar_t *out, int n) {
 }
 
 // Met a jour g_lastApp et renvoie le % du profil de l'app active (-1 = aucun)
-static int CheckProfiles() {
+// Windows nous previent quand l'app au premier plan change (fil de la fenetre) : on retient son nom
+void ForegroundChanged() {
     wchar_t exe[64];
     ForegroundExe(exe, 64);
+    EnterCriticalSection(&g_lock);
+    wcscpy(g_fgExe, exe);
+    LeaveCriticalSection(&g_lock);
+    InterlockedIncrement(&g_fgSeq);
+    SetEvent(g_wakeEvent);
+}
+
+static int CheckProfiles() {
+    wchar_t exe[64];
     int pct = -1;
     EnterCriticalSection(&g_lock);
+    wcscpy(exe, g_fgExe);                          // plus besoin d'ouvrir le processus a chaque reveil
     if (exe[0]) {
         wcscpy(g_lastApp, exe);
         g_profileApp[0] = 0;
@@ -264,7 +279,7 @@ void ResetLearning() {
 
 // ---------- Mesures ----------
 // Photo webcam -> lumiere estimee en lux (grace a l'exposition connue)
-static bool CameraLux(bool calibrate, double *lux) {
+static bool CameraLux(bool calibrate, bool quick, double *lux) {
     wchar_t pref[128];
     EnterCriticalSection(&g_lock);
     wcscpy(pref, g_camChoice);
@@ -272,7 +287,7 @@ static bool CameraLux(bool calibrate, double *lux) {
     bool locked = g_camLocked != 0;
     long e = locked ? g_camLockValue : g_camExposure;
     CamShot shot;
-    if (!WebcamMeasure(pref, &e, locked, &shot)) return false;
+    if (!WebcamMeasure(pref, &e, locked, quick, &shot)) return false;
     if (!locked && shot.manual && e != g_camExposure) { g_camExposure = e; RegPut(L"CamExposure", (DWORD)e); }
     g_camExpMin = shot.expMin;
     g_camExpMax = shot.expMax;
@@ -357,14 +372,36 @@ DWORD WINAPI Worker(LPVOID) {
     double ambMired = -1;    // couleur de la piece lissee (en "mired" = 1 000 000 / Kelvin, comme l'oeil la percoit)
     double dispMired = 1e6 / 6500, appliedMired = 1e6 / 6500;
     bool colorChanged = false;
-    DWORD lastColorApply = 0;
+    DWORD lastColorApply = 0, lastSmooth = 0;
+    double prevCamLux = -1;  // photo d'avant (lumiere stable = photo rapide)
+    LONG seenFg = -1;
+    int lastSent = -1, stepTarget = -1, ecoStep = 1;
+    DWORD period = 1000;     // prochain reveil prevu (ms)
     HANDLE evs[2] = { g_quitEvent, g_wakeEvent };
+    // Minuterie "regroupable" : Windows peut decaler un peu notre reveil pour le grouper avec d'autres
+    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, 0, TIMER_ALL_ACCESS);
+    auto waitMs = [&](DWORD ms) -> bool {        // true = il faut quitter
+        LARGE_INTEGER due;
+        due.QuadPart = -(LONGLONG)ms * 10000;
+        ULONG tolerance = ms / 10 > 1000 ? 1000 : ms / 10;
+        if (!ms || !timer || !SetWaitableTimerEx(timer, &due, 0, NULL, NULL, NULL, tolerance))
+            return WaitForMultipleObjects(2, evs, FALSE, ms) == WAIT_OBJECT_0;
+        HANDLE hs[3] = { g_quitEvent, g_wakeEvent, timer };
+        DWORD r = WaitForMultipleObjects(3, hs, FALSE, INFINITE);
+        CancelWaitableTimer(timer);
+        return r == WAIT_OBJECT_0;
+    };
 
-    auto setBrightness = [&](int pct) {
-        BrightnessSet(pct);
+    // readBack : relire la valeur (WMI, couteux) seulement a la fin d'une transition
+    auto setBrightness = [&](int pct, bool readBack) {
+        if (pct != lastSent) BrightnessSet(pct);    // meme valeur : aucun appel
+        lastSent = pct;
         lastSetTick = GetTickCount();
-        int r = BrightnessGet();             // certains ecrans arrondissent (ex. 43 -> 40)
-        expectRead = r >= 0 ? r : -2;
+        if (readBack) {
+            int r = BrightnessGet();             // certains ecrans arrondissent (ex. 43 -> 40)
+            expectRead = r >= 0 ? r : -2;
+            if (r >= 0) lastSent = r;
+        }
     };
     auto resetColor = [&]() {
         if (colorChanged) ColorReset();
@@ -378,11 +415,12 @@ DWORD WINAPI Worker(LPVOID) {
         bool calib = InterlockedExchange(&g_calibrate, 0) != 0;
         LONG nudge = InterlockedExchange(&g_nudge, 0);
         DWORD now = GetTickCount();
-        // Cadence : 1 s quand la fenetre est ouverte ; sinon 2 s (capteur) ou 5 s (webcam / soleil : la lumiere
-        // ne change pas si vite). x2 en economie d'energie. Moins de reveils = moins de batterie.
-        DWORD period = g_uiVisible ? 1000 : (g_source == SRC_SENSOR ? 2000 : 5000);
-        if (g_ecoActive && !g_uiVisible) period *= 2;
-        bool tick = first || force || calib || nudge || now - lastTick >= period;
+        // Cadence (NextWakeMs) : 1 s fenetre ouverte ; 2 s avec un capteur ; sinon on dort jusqu'a la prochaine
+        // photo ou la prochaine minute (15 s max). Le reste (app changee, souris, veille...) nous reveille.
+        LONG fg = g_fgSeq;
+        bool fgChanged = fg != seenFg;
+        seenFg = fg;
+        bool tick = first || force || calib || nudge || fgChanged || now - lastTick >= period;
 
         if (tick) {
             lastTick = now;
@@ -394,6 +432,7 @@ DWORD WINAPI Worker(LPVOID) {
             if (seq != seenSeq) { seenSeq = seq; notified = true; actual = g_osBright; }
             else if (!notified && now - lastPoll >= 10000) { lastPoll = now; actual = BrightnessGet(); }
             bool ownChange = now - lastSetTick < 2000;       // c'est nous qui venons de la changer
+            if (actual >= 0) lastSent = actual;              // vraie valeur de l'ecran (touches Fn...)
 
             // Economie d'energie : 1 = sur batterie (ou economiseur), 2 = seulement avec l'economiseur de Windows
             g_ecoActive = (g_batteryMode == 1 && (g_onBattery || g_batterySaver)) || (g_batteryMode == 2 && g_batterySaver);
@@ -401,10 +440,16 @@ DWORD WINAPI Worker(LPVOID) {
             // Pause : ordi verrouille, ecran eteint, veille, jeu (plein ecran ou marque "Jeu" dans les profils)
             int profile = CheckProfiles();
             g_profilePct = profile;
-            if (now - lastFsCheck >= 2000) { lastFsCheck = now; fullscreen = g_pauseFullscreen && FullscreenApp(); }
+            // plein ecran : a chaque changement d'app, et toutes les 10 s (un jeu passe parfois en plein ecran apres)
+            if (fgChanged || now - lastFsCheck >= 10000) { lastFsCheck = now; fullscreen = g_pauseFullscreen && FullscreenApp(); }
+            // Personne devant l'ordi depuis 3 min (ni clavier ni souris) : plus de photo webcam
+            LASTINPUTINFO li = { sizeof(li) };
+            bool idle = g_idlePause && g_source != SRC_SENSOR && GetLastInputInfo(&li) && now - li.dwTime > 180000;
             int pause = g_suspended ? PAUSE_SLEEP : g_locked ? PAUSE_LOCKED : g_displayOff ? PAUSE_SCREEN_OFF
-                      : profile == 0 ? PAUSE_GAME : fullscreen ? PAUSE_FULLSCREEN : PAUSE_NONE;
+                      : profile == 0 ? PAUSE_GAME : fullscreen ? PAUSE_FULLSCREEN : idle ? PAUSE_IDLE : PAUSE_NONE;
             g_pauseReason = pause;
+            // Absent : la fenetre ecoute la souris ; des qu'elle bouge, on reprend une photo tout de suite
+            if ((pause == PAUSE_IDLE) != (g_idleArmed != 0)) PostMessageW(g_hwnd, WM_IDLE_WATCH, pause == PAUSE_IDLE, 0);
             // Fin d'une pause (reveil, deverrouillage, ecran rallume, fin du jeu, app reactivee) :
             // nouvelle mesure tout de suite, appliquee sans transition
             if (pause || !g_enabled) wasPaused = true;
@@ -414,15 +459,17 @@ DWORD WINAPI Worker(LPVOID) {
             // Pendant un jeu, les couleurs redeviennent normales (les vraies couleurs du jeu).
             if (!g_enabled || pause) {
                 if (!g_enabled || pause == PAUSE_GAME || pause == PAUSE_FULLSCREEN) resetColor();
-                if (nudge && current >= 0) setBrightness(current = Clamp(current + nudge, 1, 100));
+                if (nudge && current >= 0) setBrightness(current = Clamp(current + nudge, 1, 100), true);
                 else if (actual >= 0) current = actual;
                 expectRead = -2;
                 target = -1;
                 g_bright = current;
                 RecordMinute(!g_enabled, pause != 0, current, -1, 0);
                 PostMessageW(g_hwnd, WM_UPDATE, 0, 0);
-                // en pause, fenetre cachee : on se reveille rarement (Windows nous previent au deverrouillage)
-                if (WaitForMultipleObjects(2, evs, FALSE, g_uiVisible ? 1000 : 3000) == WAIT_OBJECT_0) break;
+                // en pause, fenetre cachee : on se reveille rarement (Windows nous previent au deverrouillage,
+                // au changement d'app, quand la souris rebouge...)
+                period = g_uiVisible ? 1000 : 15000;
+                if (waitMs(period)) break;
                 continue;
             }
 
@@ -449,7 +496,11 @@ DWORD WINAPI Worker(LPVOID) {
                         } else {
                             g_remeasure = 0;
                             camDue = GetTickCount() + interval * 1000;   // une photo toutes les N secondes
-                            if (CameraLux(calib, &camLux)) {
+                            // lumiere stable et image bien exposee : photo rapide (moins d'images)
+                            bool quick = !force && !calib && QuickPhotoOk(prevCamLux, camLux, g_camClip);
+                            double before = camLux;
+                            if (CameraLux(calib, quick, &camLux)) {
+                                prevCamLux = before;
                                 g_source = SRC_CAMERA;
                                 g_lastMeasure = (LONG)GetTickCount();
                                 StatsEvent(STAT_PHOTO);
@@ -480,8 +531,13 @@ DWORD WINAPI Worker(LPVOID) {
             // 2) Lisser : plus clair = vite (pour lire), plus sombre = lentement (une ombre qui passe
             //    ne doit pas assombrir l'ecran)
             double lg = log10(lux + 1);
+            // lissage selon le temps ecoule (reference : un pas toutes les 5 s), quelle que soit la cadence
+            DWORD dtMs = lastSmooth ? GetTickCount() - lastSmooth : 5000;
+            lastSmooth = GetTickCount();
+            double k5 = (dtMs > 30000 ? 30000 : dtMs) / 5000.0;
+            auto rate = [&](double a) { return 1 - pow(1 - a, k5); };
             if (smoothLog < 0 || force || calib || first) smoothLog = lg;
-            else smoothLog += (lg - smoothLog) * (lg > smoothLog ? 0.5 : 0.15);
+            else smoothLog += (lg - smoothLog) * rate(lg > smoothLog ? 0.5 : 0.15);
             // Zone morte : on ne change la cible que si la lumiere a vraiment change (~12 %)
             if (anchorLog < 0 || force || calib || first || fabs(smoothLog - anchorLog) > 0.05) anchorLog = smoothLog;
             double t = CurveT(pow(10.0, anchorLog) - 1);
@@ -540,7 +596,7 @@ DWORD WINAPI Worker(LPVOID) {
             if (lastStatTarget >= 0 && abs(target - lastStatTarget) >= 2 && !nudge) StatsEvent(STAT_ADJUST);
             lastStatTarget = target;
 
-            if (current < 0 || force || calib) setBrightness(current = target);   // tout de suite, sans transition
+            if (current < 0 || force || calib) setBrightness(current = target, true);   // tout de suite, sans transition
 
             // 5) True Tone : la couleur du blanc de l'ecran suit (en partie) la couleur de la lumiere
             double ambK = -1;
@@ -551,7 +607,7 @@ DWORD WINAPI Worker(LPVOID) {
             g_ttSource = ttSrc;
             double mAmb = 1e6 / ambK;
             // tres lent, comme sur iOS (environ 30 s pour suivre un changement)
-            ambMired = (ambMired < 0 || force || calib) ? mAmb : ambMired + (mAmb - ambMired) * 0.08;
+            ambMired = (ambMired < 0 || force || calib) ? mAmb : ambMired + (mAmb - ambMired) * rate(0.08);
             g_ambientK = (LONG)lround(1e6 / ambMired);
             if (g_trueTone || g_readMode) {
                 const double m6500 = 1e6 / 6500;
@@ -563,7 +619,7 @@ DWORD WINAPI Worker(LPVOID) {
                     if (targetM > 1e6 / 4700) targetM = 1e6 / 4700;
                     if (targetM < 1e6 / 7200) targetM = 1e6 / 7200;
                 }
-                dispMired += (targetM - dispMired) * ((force || calib) ? 1.0 : g_readMode ? 0.3 : 0.12);
+                dispMired += (targetM - dispMired) * ((force || calib) ? 1.0 : rate(g_readMode ? 0.3 : 0.12));
                 g_displayK = (LONG)lround(1e6 / dispMired);
                 // on reapplique si ca a change, ou toutes les 10 s (Windows remet parfois les couleurs a zero)
                 bool moved = fabs(dispMired - appliedMired) > 0.3;
@@ -596,18 +652,30 @@ DWORD WINAPI Worker(LPVOID) {
         // 7) Transition douce : petits pas toutes les 0,15 s (plus rapide si l'ecart est grand)
         if (target >= 0 && current >= 0 && current != target) {
             int diff = target - current;
-            // economie d'energie : moins de pas (moins de travail pour le processeur et l'ecran)
-            int step = g_ecoActive ? Clamp(abs(diff) / 2, 2, 8) : Clamp(abs(diff) / 3, 1, 4);
+            if (target != stepTarget) { stepTarget = target; ecoStep = EcoStep(diff); }
+            // economie d'energie : 3 pas en tout (moins de travail pour le processeur et l'ecran)
+            int step = g_ecoActive ? ecoStep : Clamp(abs(diff) / 3, 1, 4);
+            if (step > abs(diff)) step = abs(diff);
             current += diff > 0 ? step : -step;
-            setBrightness(current);
+            setBrightness(current, current == target);   // relecture seulement au dernier pas
             g_bright = current;
         }
 
+        // Prochain reveil
+        if (tick) {
+            DWORD t = GetTickCount();
+            SYSTEMTIME lt;
+            GetLocalTime(&lt);
+            unsigned toMinute = (60 - lt.wSecond) * 1000 - lt.wMilliseconds + 200;
+            unsigned toCamera = g_useCam && g_source != SRC_SENSOR ? ((LONG)(camDue - t) > 0 ? camDue - t : 0) : 0xFFFFFFFF;
+            period = NextWakeMs(g_uiVisible != 0, g_source == SRC_SENSOR, g_ecoActive != 0, toCamera, toMinute);
+        }
         DWORD elapsed = GetTickCount() - lastTick;
         DWORD wait = (target >= 0 && current != target) ? (g_ecoActive ? 300 : 150) : (elapsed >= period ? 0 : period - elapsed);
-        if (WaitForMultipleObjects(2, evs, FALSE, wait) == WAIT_OBJECT_0) break;
+        if (waitMs(wait)) break;
     }
 
+    if (timer) CloseHandle(timer);
     resetColor();                                    // couleurs normales en quittant
     SensorClose();
     BrightnessShutdown();
@@ -717,6 +785,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     g_batteryCut = (LONG)RegGet(L"BatteryCut", 10);
     if (g_batteryCut < 0 || g_batteryCut > 50) g_batteryCut = 10;
     g_externalBrightness = RegGet(L"ExternalBrightness", 1) ? 1 : 0;
+    g_idlePause = RegGet(L"IdlePause", 1) ? 1 : 0;
     g_ttStrength = (LONG)RegGet(L"TrueToneStrength", 60);
     if (g_ttStrength < 0 || g_ttStrength > 100) g_ttStrength = 60;
     g_camLockValue = (LONG)RegGet(L"CamLockValue", (DWORD)LONG_MIN);

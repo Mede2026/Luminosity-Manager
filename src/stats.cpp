@@ -2,9 +2,12 @@
 // Enregistrees dans %APPDATA%\LuminosityManager\stats.bin (environ 7 Ko).
 #include "app.h"
 #include <stdio.h>
+#include <stddef.h>
+#include <psapi.h>
 
 static const int STATS_DAYS = 120, STATS_APPS = 16;
-static const DWORD STATS_MAGIC = 0x31534D4C;   // "LMS1"
+static const DWORD STATS_MAGIC = 0x32534D4C;   // "LMS2" (v0.9 : + temps processeur de l'app)
+static const DWORD STATS_MAGIC_V1 = 0x31534D4C; // "LMS1" : meme debut, sans les champs de la fin
 
 struct DayStat {
     LONG day;                     // numero du jour (heure locale), 0 = vide
@@ -27,7 +30,11 @@ struct StatsData {
     HourStat hours[24];
     AppStat apps[STATS_APPS];
     DWORD totalMinutes, totalPhotos, totalAdjusts, totalManual, totalReading, totalPaused;
+    // v0.9 (LMS2) : ajoutes a la fin, pour relire les anciens fichiers
+    DWORD cpuMs[STATS_DAYS];      // temps processeur de l'app, par jour (meme case que days[])
+    DWORD totalCpuMs, totalRunMinutes;
 };
+static const size_t STATS_V1_SIZE = offsetof(StatsData, cpuMs);
 
 static StatsData g_st;
 static bool g_dirty;
@@ -49,8 +56,12 @@ void StatsLoad() {
         HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
         if (f != INVALID_HANDLE_VALUE) {
             DWORD got = 0;
-            StatsData tmp;
-            if (ReadFile(f, &tmp, sizeof(tmp), &got, NULL) && got == sizeof(tmp) && tmp.magic == STATS_MAGIC) g_st = tmp;
+            StatsData *tmp = (StatsData *)calloc(1, sizeof(StatsData));
+            if (tmp && ReadFile(f, tmp, sizeof(StatsData), &got, NULL) &&
+                ((got == sizeof(StatsData) && tmp->magic == STATS_MAGIC) ||
+                 (got == STATS_V1_SIZE && tmp->magic == STATS_MAGIC_V1)))   // ancien fichier : nouveaux champs a 0
+                g_st = *tmp;
+            free(tmp);
             CloseHandle(f);
         }
     }
@@ -76,15 +87,29 @@ void StatsSave() {
 static DayStat &Today() {
     LONG day = NowMinute() / 1440;
     DayStat &d = g_st.days[day % STATS_DAYS];
-    if (d.day != day) { memset(&d, 0, sizeof(d)); d.day = day; d.minLux = 0xFFFF; }
+    if (d.day != day) { memset(&d, 0, sizeof(d)); d.day = day; d.minLux = 0xFFFF; g_st.cpuMs[day % STATS_DAYS] = 0; }
     return d;
 }
 
 static void Inc(WORD &w) { if (w < 0xFFFF) w++; }
 
+// Temps processeur utilise par l'app depuis son lancement (ms)
+static ULONGLONG ProcessCpuMs() {
+    FILETIME c, e, k, u;
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return 0;
+    return ((((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime)) / 10000;
+}
+
 void StatsMinute(const StatsSample &s) {
+    static ULONGLONG lastCpu;
+    ULONGLONG cpu = ProcessCpuMs();
+    DWORD dCpu = lastCpu && cpu > lastCpu ? (DWORD)(cpu - lastCpu) : 0;
+    lastCpu = cpu;
     EnterCriticalSection(&g_lock);
     DayStat &d = Today();
+    g_st.cpuMs[d.day % STATS_DAYS] += dCpu;
+    g_st.totalCpuMs += dCpu;
+    g_st.totalRunMinutes++;
     if (s.off) Inc(d.off);
     else if (s.paused) { Inc(d.paused); g_st.totalPaused++; }
     else {
@@ -188,6 +213,7 @@ void StatsJson(JsonOut &j) {
         j.Num(L"adjusts", d.adjusts);
         j.Num(L"manual", d.manual);
         j.Num(L"photos", d.photos);
+        j.Num(L"cpuMs", g_st.cpuMs[day % STATS_DAYS]);
         j.Raw(L"}");
     }
     j.Raw(L"]");
@@ -217,6 +243,8 @@ void StatsJson(JsonOut &j) {
     j.Num(L"totalManual", g_st.totalManual);
     j.Num(L"totalReading", g_st.totalReading);
     j.Num(L"totalPaused", g_st.totalPaused);
+    j.Num(L"totalCpuMs", g_st.totalCpuMs);
+    j.Num(L"totalRunMinutes", g_st.totalRunMinutes);
     LeaveCriticalSection(&g_lock);
 }
 
@@ -227,4 +255,16 @@ void StatsReset() {
     g_st.firstDay = NowMinute() / 1440;
     LeaveCriticalSection(&g_lock);
     StatsSave();
+}
+
+// Consommation de l'app aujourd'hui : processeur (%), photos par heure active, memoire (Mo)
+void StatsAppUsage(double *cpuPct, double *photosPerHour, double *memMb) {
+    EnterCriticalSection(&g_lock);
+    DayStat &d = Today();
+    double run = (double)d.active + d.paused + d.off;
+    *cpuPct = CpuPercent(g_st.cpuMs[d.day % STATS_DAYS], run);
+    *photosPerHour = d.active ? d.photos * 60.0 / d.active : 0;
+    LeaveCriticalSection(&g_lock);
+    PROCESS_MEMORY_COUNTERS pmc = { sizeof(pmc) };
+    *memMb = K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)) ? pmc.WorkingSetSize / 1048576.0 : 0;
 }

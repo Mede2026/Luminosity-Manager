@@ -33,3 +33,11 @@ bool IsNewerVersion(const wchar_t *remote, const wchar_t *local);
 
 // Mises a jour : lit l'empreinte SHA-256 (64 caracteres hexa) au debut d'un fichier .sha256
 bool ParseSha256(const char *text, char out[65]);
+
+// Economie de batterie
+bool QuickPhotoOk(double prevLux, double lastLux, int clip);   // lumiere stable (< 15 %) et image bien exposee
+int EcoStep(int diff);                           // pas de la transition en economie d'energie (3 pas)
+// Attente du fil de travail (ms) : fenetre ouverte 1 s ; capteur 2 s ; sinon jusqu'a la prochaine photo
+// ou la prochaine minute (statistiques), 15 s max (30 s en economie d'energie)
+unsigned NextWakeMs(bool visible, bool sensor, bool eco, unsigned msToCamera, unsigned msToMinute);
+double CpuPercent(double cpuMs, double minutes); // part du processeur utilisee par l'app (%)

@@ -38,6 +38,7 @@
 #define WM_UPDATE_READY  (WM_APP + 5)   // wParam : 1 = nouveau .exe en place, 0 = echec, 2 = bloque par Securite Windows
 #define WM_CITY_FOUND    (WM_APP + 6)   // wParam : 1 = trouvee
 #define WM_LEARNED       (WM_APP + 7)   // wParam : ecart appris (luminosite changee a la main)
+#define WM_IDLE_WATCH    (WM_APP + 9)   // wParam : 1 = ecouter la souris (absent), 0 = arreter
 #define WM_QUIT_APP      (WM_APP + 8)   // quitter (demande par le desinstalleur)
 #define STARTED_EVENT    L"Local\\LuminosityManager_Started"   // la nouvelle version a bien demarre
 
@@ -79,7 +80,9 @@ extern volatile LONG g_readMode;                 // mode lecture actif
 extern volatile LONG g_pauseReason;              // 0 aucune, 1 verrouille, 2 ecran eteint, 3 veille, 4 plein ecran, 5 jeu
 extern volatile LONG g_camBusy;                  // la webcam est utilisee par une autre app
 extern volatile LONG g_osBright, g_osBrightSeq;  // luminosite annoncee par Windows (notification)
-enum { PAUSE_NONE, PAUSE_LOCKED, PAUSE_SCREEN_OFF, PAUSE_SLEEP, PAUSE_FULLSCREEN, PAUSE_GAME };
+enum { PAUSE_NONE, PAUSE_LOCKED, PAUSE_SCREEN_OFF, PAUSE_SLEEP, PAUSE_FULLSCREEN, PAUSE_GAME, PAUSE_IDLE };
+extern volatile LONG g_idlePause, g_idleArmed;   // pas de photo quand tu n'es pas la ; souris ecoutee
+void ForegroundChanged();                        // main.cpp : l'app au premier plan a change (Windows nous previent)
 enum { TT_NONE, TT_SENSOR, TT_CAMERA, TT_SUN };
 
 // La courbe lumiere -> luminosite (core.h), et ce que l'app a appris de toi
@@ -125,6 +128,7 @@ void StatsSave();
 void StatsMinute(const StatsSample &s);
 void StatsEvent(int type);
 void StatsReset();
+void StatsAppUsage(double *cpuPct, double *photosPerHour, double *memMb);
 struct JsonOut;
 void StatsJson(JsonOut &j);
 bool AppDataFile(const wchar_t *name, wchar_t *path, bool create);   // %APPDATA%\LuminosityManager\name
@@ -160,7 +164,7 @@ extern BYTE *g_thumb;                            // miniature couleur (R, G, B) 
 extern volatile LONG g_thumbValid;
 extern wchar_t g_camUsed[128];                   // camera reellement utilisee
 int ListCameras(wchar_t names[][128], int max);
-bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, CamShot *out);
+bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, bool quick, CamShot *out);  // quick = lumiere stable, moins d'images
 double SunElevation(double lat, double lon);
 bool WebcamBusyElsewhere();                      // une autre app utilise la camera (Teams, Discord...)
 

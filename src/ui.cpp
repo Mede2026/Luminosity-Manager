@@ -164,6 +164,14 @@ static void SendState() {
     j.Bool(L"pauseFullscreen", g_pauseFullscreen);
     j.Bool(L"readMode", g_readMode);
     j.Bool(L"external", g_externalBrightness);
+    j.Bool(L"idlePause", g_idlePause);
+    if (g_uiVisible) {                           // consommation de l'app (seulement fenetre ouverte)
+        double cpu, photos, mem;
+        StatsAppUsage(&cpu, &photos, &mem);
+        j.Num(L"appCpu", cpu);
+        j.Num(L"appPhotosH", photos);
+        j.Num(L"appMemMb", mem);
+    }
     j.Num(L"ago", g_lastMeasure ? (double)((GetTickCount() - (DWORD)g_lastMeasure) / 1000) : -1);
     j.Num(L"camNext", g_camNext);
     j.Bool(L"useCam", g_useCam);
@@ -570,6 +578,7 @@ void OnPageMessage(const char *json) {
     else if (!wcscmp(cmd, L"setPauseFullscreen")) { g_pauseFullscreen = value != 0; RegPut(L"PauseFullscreen", g_pauseFullscreen); SendState(); }
     else if (!wcscmp(cmd, L"setBatteryMode")) { g_batteryMode = Clamp(value, 0, 2); RegPut(L"BatteryMode", g_batteryMode); SetEvent(g_wakeEvent); SendState(); }
     else if (!wcscmp(cmd, L"setBatteryCut"))  { g_batteryCut = Clamp(value, 0, 50); RegPut(L"BatteryCut", g_batteryCut); SetEvent(g_wakeEvent); SendState(); }
+    else if (!wcscmp(cmd, L"setIdlePause"))   { g_idlePause = value != 0; RegPut(L"IdlePause", g_idlePause); SetEvent(g_wakeEvent); SendState(); }
     else if (!wcscmp(cmd, L"setExternal"))    { g_externalBrightness = value != 0; RegPut(L"ExternalBrightness", g_externalBrightness); SendState(); }
     else if (!wcscmp(cmd, L"getStats"))       SendStats();
     else if (!wcscmp(cmd, L"locate"))         StartLocate();
@@ -688,6 +697,22 @@ static void AddTrayIcon() {
 }
 
 // ---------- Messages de la fenetre ----------
+// ---------- Economie : changement d'app et retour de l'utilisateur ----------
+static HWINEVENTHOOK g_fgHook;
+static void CALLBACK OnForeground(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) { ForegroundChanged(); }
+
+// Mouvements de souris (Raw Input) : seulement pendant une absence, pour reprendre des que tu reviens.
+// Pas de hook global du clavier (ca ressemblerait a un logiciel espion).
+static void WatchMouse(bool on) {
+    if ((g_idleArmed != 0) == on) return;
+    RAWINPUTDEVICE rid = {};
+    rid.usUsagePage = 0x01;                      // appareils de pointage
+    rid.usUsage = 0x02;                          // souris (et pave tactile)
+    rid.dwFlags = on ? RIDEV_INPUTSINK : RIDEV_REMOVE;
+    rid.hwndTarget = on ? g_hwnd : NULL;
+    if (RegisterRawInputDevices(&rid, 1, sizeof(rid)) || !on) g_idleArmed = on;
+}
+
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_TRAY:
@@ -731,6 +756,16 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         return 0;
+    case WM_IDLE_WATCH:                          // absent : on ecoute la souris (seulement pendant l'absence)
+        WatchMouse(wp != 0);
+        return 0;
+    case WM_INPUT:                               // la souris a bouge : on revient, photo tout de suite
+        if (g_idleArmed) {
+            WatchMouse(false);
+            g_force = 1;
+            SetEvent(g_wakeEvent);
+        }
+        break;                                   // DefWindowProc doit aussi le voir
     case WM_TIMER:
         if (wp == TIMER_LOCATE) { KillTimer(h, TIMER_LOCATE); StartLocate(); return 0; }
         if (wp == TIMER_UPD_FIRST) KillTimer(h, TIMER_UPD_FIRST);
@@ -839,6 +874,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         HideMainWindow();
         return 0;
     case WM_DESTROY:
+        if (g_fgHook) UnhookWinEvent(g_fgHook);
+        WatchMouse(false);
         WTSUnRegisterSessionNotification(h);
         WebViewDestroy();
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
@@ -897,16 +934,21 @@ bool CreateMainWindow(HINSTANCE inst, bool showWindow, int) {
                                   &GUID_ACDC_POWER_SOURCE, &GUID_POWER_SAVING, NULL };
     for (int i = 0; powerGuids[i]; i++) RegisterPowerSettingNotification(g_hwnd, powerGuids[i], DEVICE_NOTIFY_WINDOW_HANDLE);
     WTSRegisterSessionNotification(g_hwnd, NOTIFY_FOR_THIS_SESSION);
+    // Windows nous previent quand tu changes d'app (profils, jeux) : plus besoin de verifier sans arret
+    g_fgHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, NULL, OnForeground, 0, 0,
+                               WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    ForegroundChanged();
     SYSTEM_POWER_STATUS ps;
     if (GetSystemPowerStatus(&ps)) {
         g_onBattery = ps.ACLineStatus == 0;
         g_batterySaver = ps.SystemStatusFlag == 1;
     }
     // 1er lancement : on trouve la ville tout seul (pour le mode soleil)
-    if (!RegGet(L"AutoLocated", 0) && !RegGet(L"Latitude", 0)) SetTimer(g_hwnd, TIMER_LOCATE, 3000, NULL);
+    if (!RegGet(L"AutoLocated", 0) && !RegGet(L"Latitude", 0)) SetCoalescableTimer(g_hwnd, TIMER_LOCATE, 3000, NULL, 1000);
 
-    SetTimer(g_hwnd, TIMER_UPD_FIRST, 10 * 1000, NULL);          // 1re verification 10 s apres le lancement
-    SetTimer(g_hwnd, TIMER_UPD_DAILY, 24 * 60 * 60 * 1000, NULL);
+    // minuteries "regroupables" : Windows peut les decaler un peu pour grouper les reveils du processeur
+    SetCoalescableTimer(g_hwnd, TIMER_UPD_FIRST, 10 * 1000, NULL, 5000);          // 1re verification ~10 s apres le lancement
+    SetCoalescableTimer(g_hwnd, TIMER_UPD_DAILY, 24 * 60 * 60 * 1000, NULL, 60 * 1000);
 
     if (showWindow) ShowMainWindow();
     return true;

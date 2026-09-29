@@ -122,6 +122,7 @@
         <div class="card"><div class="card-head"><h2>Lumière moyenne par jour</h2><small class="muted">lux</small></div><div class="bars" id="chart-days-lux"></div></div>
         <div class="card wide"><div class="card-head"><h2>Ta journée type</h2><small class="muted">luminosité moyenne de l'écran selon l'heure (depuis le début)</small></div><div class="bars" id="chart-hours"></div></div>
         <div class="card wide"><div class="card-head"><h2>La lumière de ta pièce</h2><small class="muted">temps passé dans chaque type de lumière</small></div><div id="chart-cats"></div></div>
+        <div class="card wide"><div class="card-head"><h2>L'app elle-même</h2><small class="muted">ce que Luminosity Manager consomme (fenêtre non comprise)</small></div><div class="totals four" id="stats-app"></div></div>
         <div class="card sm"><div class="card-head"><h2>Ton temps</h2></div><div class="hbars" id="chart-time"></div></div>
         <div class="card sm"><div class="card-head"><h2>Comment la lumière a été mesurée</h2></div><div class="hbars" id="chart-src"></div></div>
         <div class="card sm"><div class="card-head"><h2>Apps avec un profil</h2></div><div class="hbars" id="chart-apps"></div></div>
@@ -186,11 +187,18 @@
         <div class="row">
           <div class="row-text"><b>État</b><small id="eco-state">—</small></div>
         </div>
+        <div class="row">
+          <div class="row-text"><b>Consommation de l'app</b><small id="app-usage">—</small></div>
+        </div>
       </div>
       <div class="card group">
         <div class="row">
           <div class="row-text"><b>🎮 Se désactiver pendant les jeux</b><small>Jeux et vidéos en plein écran : la luminosité ne bouge plus et les couleurs redeviennent normales. Pour un jeu en fenêtre, coche « Jeu » dans Profils d'apps.</small></div>
           <div class="row-ctl"><input type="checkbox" class="switch" id="pauseFullscreen"></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Pas de photo quand tu n'es pas là</b><small>Après 3 min sans clavier ni souris, la webcam se repose. Dès que la souris bouge, nouvelle photo tout de suite.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="idlePause"></div>
         </div>
         <div class="row">
           <div class="row-text"><b>Écrans externes</b><small>Régler aussi la luminosité des écrans branchés (DDC/CI, à activer dans le menu de l'écran).</small></div>

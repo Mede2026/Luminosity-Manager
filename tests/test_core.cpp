@@ -85,6 +85,28 @@ static void TestSha() {
     CHECK(!ParseSha256("e3b0c442", h));               // trop court
 }
 
+static void TestBattery() {
+    CHECK(QuickPhotoOk(200, 210, 0));                  // stable : photo rapide
+    CHECK(!QuickPhotoOk(200, 260, 0));                 // +30 % : photo complete
+    CHECK(!QuickPhotoOk(200, 205, 1));                 // image trop sombre : photo complete
+    CHECK(!QuickPhotoOk(-1, 200, 0));                  // pas de photo avant : complete
+    CHECK(QuickPhotoOk(0, 0, 0));
+    CHECK(EcoStep(0) == 1 && EcoStep(1) == 1 && EcoStep(3) == 1 && EcoStep(4) == 2);
+    for (int d = -100; d <= 100; d++) {               // toujours arrive en 3 pas au plus
+        int s = EcoStep(d), ad = d < 0 ? -d : d;
+        CHECK(s >= 1 && s * 3 >= ad);
+    }
+    CHECK(NextWakeMs(true, false, false, 99999, 99999) == 1000);
+    CHECK(NextWakeMs(false, true, false, 0, 0) == 2000 && NextWakeMs(false, true, true, 0, 0) == 4000);
+    CHECK(NextWakeMs(false, false, false, 99999, 99999) == 15000);
+    CHECK(NextWakeMs(false, false, true, 99999, 99999) == 30000);
+    CHECK(NextWakeMs(false, false, false, 4000, 20000) == 4000);   // prochaine photo
+    CHECK(NextWakeMs(false, false, false, 20000, 7000) == 7000);   // prochaine minute
+    CHECK(NextWakeMs(false, false, false, 0, 7000) == 500);        // jamais 0 (pas de boucle folle)
+    CHECK(Near(CpuPercent(600, 1), 1, 1e-9));           // 0,6 s sur 1 min = 1 %
+    CHECK(CpuPercent(100, 0) == 0 && CpuPercent(-5, 10) == 0);
+}
+
 int main() {
     TestCurve();
     TestLearning();
@@ -94,6 +116,7 @@ int main() {
     TestCategories();
     TestVersions();
     TestSha();
+    TestBattery();
     printf("%d verifications, %d echec(s)\n", g_count, g_fail);
     return g_fail ? 1 : 0;
 }

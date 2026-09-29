@@ -114,7 +114,7 @@ function renderState() {
   const pill = $('status');
   pill.className = 'pill';
   let text;
-  const PAUSES = ['', 'ordi verrouillé', 'écran éteint', 'veille', 'jeu ou vidéo en plein écran', 'jeu (' + s.profileApp + ')'];
+  const PAUSES = ['', 'ordi verrouillé', 'écran éteint', 'veille', 'jeu ou vidéo en plein écran', 'jeu (' + s.profileApp + ')', 'tu n\'es pas là (la souris te fera revenir)'];
   if (!on) { pill.classList.add('off'); text = 'Désactivé : la luminosité ne change plus'; }
   else if (s.pauseReason > 0) { pill.classList.add('off'); text = 'En pause : ' + PAUSES[s.pauseReason]; }
   else if (s.profilePct >= 0) { pill.classList.add('profile'); text = 'Profil ' + s.profileApp + ' : ' + s.profilePct + ' %'; }
@@ -195,6 +195,12 @@ function renderState() {
     : !s.batteryMode ? 'Désactivée.' : s.onBattery ? 'Sur batterie, mais pas active (réglée pour l\'économiseur de Windows).' : 'Pas active : le PC est branché.';
   $('pauseFullscreen').checked = s.pauseFullscreen;
   $('external').checked = s.external;
+  $('idlePause').checked = s.idlePause;
+  if (s.appCpu !== undefined) {
+    appMem = s.appMemMb;
+    $('app-usage').textContent = 'Aujourd\'hui : ' + fmtPct(s.appCpu) + ' du processeur · ' + fmtDec(s.appMemMb) + ' Mo de mémoire · '
+      + fmtDec(s.appPhotosH) + ' photo' + (s.appPhotosH >= 2 ? 's' : '') + ' webcam par heure';
+  }
 
   // True Tone
   $('tt-home').textContent = !s.trueTone ? 'désactivé' : s.displayK + ' K';
@@ -560,6 +566,7 @@ $('batteryCut').oninput = (e) => { setRange(e.target, +e.target.value); $('batte
 $('batteryCut').onchange = (e) => send('setBatteryCut', { value: +e.target.value });
 $('pauseFullscreen').onchange = (e) => send('setPauseFullscreen', { value: e.target.checked ? 1 : 0 });
 $('external').onchange = (e) => send('setExternal', { value: e.target.checked ? 1 : 0 });
+$('idlePause').onchange = (e) => send('setIdlePause', { value: e.target.checked ? 1 : 0 });
 $('btn-locate').onclick = () => { $('city-coords').textContent = 'Recherche de ta position…'; send('locate'); };
 $('btn-export').onclick = () => send('exportData');
 $('btn-import').onclick = () => send('importData');
@@ -612,6 +619,11 @@ function fmtMin(min) {
   return h + ' h' + (m ? ' ' + pad(m) : '');
 }
 const fmtNum = (n) => Math.round(n).toLocaleString('fr-CA');
+const fmtDec = (n) => (n >= 10 ? Math.round(n) : Math.round(n * 10) / 10).toLocaleString('fr-CA');
+// tres petits pourcentages : 0,004 % (l'app consomme presque rien)
+const fmtPct = (p) => (p <= 0 ? '0' : p < 0.01 ? '< 0,01' : p < 1 ? p.toFixed(p < 0.1 ? 3 : 2).replace('.', ',') : fmtDec(p)) + ' %';
+function fmtCpu(ms) { return ms < 60000 ? fmtDec(ms / 1000) + ' s' : ms < 3600000 ? fmtDec(ms / 60000) + ' min' : fmtDec(ms / 3600000) + ' h'; }
+let appMem = -1;
 function parseDate(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); }
 function fmtDate(iso, long) {
   const d = parseDate(iso);
@@ -797,6 +809,19 @@ function renderStats() {
   hbars($('chart-apps'), stats.apps.slice().sort((a, b) => b.minutes - a.minutes)
     .map((a) => ({ label: a.exe, value: a.minutes, text: fmtMin(a.minutes) })), 'Aucun profil d\'app utilisé pour l\'instant.');
 
+  // L'app elle-meme : processeur, photos par heure, memoire
+  const cpuMs = sum((d) => d.cpuMs || 0), run = sum((d) => d.active + d.paused + d.off), photos = sum((d) => d.photos);
+  const app = $('stats-app');
+  app.innerHTML = '';
+  [['Processeur (moyenne)', cpuMs ? fmtPct(cpuMs / (run * 60000) * 100) : '—'], ['Temps processeur', cpuMs ? fmtCpu(cpuMs) : '—'],
+   ['Photos webcam par heure', active ? fmtDec(photos * 60 / active) : '—'], ['Mémoire maintenant', appMem >= 0 ? fmtDec(appMem) + ' Mo' : '—']].forEach(([k, v]) => {
+    const d = document.createElement('div');
+    d.innerHTML = '<span></span><b></b>';
+    d.children[0].textContent = k;
+    d.children[1].textContent = v;
+    app.appendChild(d);
+  });
+
   $('stats-since').textContent = 'depuis le ' + fmtDate(stats.since, true);
   const tot = $('stats-totals');
   tot.innerHTML = '';
@@ -941,7 +966,7 @@ function demo() {
       min: 10, max: 100, applied: 72, learnNow: 0, level: 0.6, learn: [8, 3, 0, 0, 0], camLocked: false, camLockValue: -6,
       camExposure: -6, camExpMin: -11, camExpMax: -2, camExpStep: 1, camLogUnits: true, camManualOk: true, camClip: 0, trueTone: true, ttStrength: 60, ambientK: 3400, displayK: 5300, ttSource: 2, ttOk: true, ago: ago++ % 30, camNext: 30 - (ago % 30), useCam: true, camInterval: 30, camQuality: 0,
       camLevel: 46, startup: true, updateCheck: true, lat: 45.59, lon: -73.44, camUsed: 'Integrated Camera', profileApp: '', profilePct: -1, pauseReason: 0, camBusy: false, onBattery: true, batterySaver: false, ecoActive: true,
-      batteryMode: 1, batteryCut: 10, pauseFullscreen: true, readMode: false, external: true });
+      batteryMode: 1, batteryCut: 10, pauseFullscreen: true, readMode: false, external: true, idlePause: true, appCpu: 0.0042, appMemMb: 3.1, appPhotosH: 38 });
   };
   tick();
   setInterval(tick, 1000);
@@ -957,7 +982,7 @@ function demo() {
       battery: Math.round(rnd() * 150), trueTone: active, bright: 35 + rnd() * 40, lux, minLux: 2, maxLux: 1800, displayK: 5200 + rnd() * 900,
       src: [0, Math.round(active * 0.8), Math.round(active * 0.2)],
       cat: [Math.round(active * 0.12), Math.round(active * 0.25), Math.round(active * 0.4), Math.round(active * 0.18), Math.round(active * 0.05)],
-      adjusts: Math.round(10 + rnd() * 40), manual: Math.round(rnd() * 4), photos: Math.round(active * 2) });
+      adjusts: Math.round(10 + rnd() * 40), manual: Math.round(rnd() * 4), photos: Math.round(active * 0.6), cpuMs: Math.round(active * 60000 * 0.00005) });
   }
   onMessage({ type: 'stats', today: iso(new Date()), since: sd[0].date, days: sd,
     hours: Array.from({ length: 24 }, (_, h) => [h < 7 ? -1 : 20 + 50 * Math.max(0, Math.sin(((h - 6) / 15) * Math.PI)), 20 + 500 * Math.max(0, Math.sin(((h - 6) / 14) * Math.PI))]),

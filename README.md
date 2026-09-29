@@ -10,7 +10,14 @@ Application Windows légère (**~470 Ko**, installation en un clic, sans droits 
 
 **Légère** : la fenêtre utilise WebView2 (le moteur d'Edge, déjà dans Windows 10/11). Il n'existe **que quand la fenêtre est ouverte** : fenêtre cachée = ~3 Mo de mémoire.
 
-**Économe** : mode efficacité de Windows 11, une vérification toutes les 5 s fenêtre fermée (2 s avec un capteur), pause complète quand l'ordi est verrouillé / en veille / écran éteint, et Windows prévient l'app quand la luminosité change (elle ne demande pas sans arrêt).
+**Économe** :
+- mode efficacité de Windows 11 ;
+- fenêtre fermée, l'app dort jusqu'à la prochaine photo (15 s max ; 2 s avec un capteur), avec des minuteries « regroupables » que Windows cale sur ses autres réveils ;
+- pause complète quand l'ordi est verrouillé, en veille ou écran éteint ;
+- **pas de photo quand tu n'es pas devant l'ordi** (3 min sans clavier ni souris) ; dès que la souris bouge, nouvelle photo tout de suite ;
+- Windows prévient l'app quand la luminosité change et quand tu changes d'app (elle ne demande pas sans arrêt) ;
+- photo webcam légère : plus petite résolution de la caméra, et 5 images au lieu de 10 quand la lumière est stable ;
+- la page **Statistiques** montre ce que l'app consomme elle-même (processeur, photos par heure, mémoire).
 
 ## D'où vient la mesure de lumière ?
 | Priorité | Source | Quand |
@@ -37,7 +44,7 @@ Application Windows légère (**~470 Ko**, installation en un clic, sans droits 
 | **Statistiques** | Aujourd'hui / 7 / 30 / 90 jours (gardées 120 jours, jamais effacées par erreur) : temps actif, luminosité et lumière moyennes, écran économisé (Wh estimés), ajustements, photos, journée type, types de lumière, sources, apps… |
 | **Luminosité** | Ajout −50 à +50 %, minimum / maximum, ta courbe (« Tu es ici », points appris), démarrage Windows |
 | **True Tone** | Couleur de la pièce → blanc de l'écran, activer, intensité |
-| **Énergie et jeux** | Économie d'énergie (sur batterie / économiseur Windows / jamais), luminosité en moins, pause pendant les jeux, écrans externes |
+| **Énergie et jeux** | Économie d'énergie (sur batterie / économiseur Windows / jamais), luminosité en moins, consommation de l'app en direct, pause pendant les jeux, pas de photo quand tu n'es pas là, écrans externes |
 | **Webcam** | Photo, clarté, lux estimés, caméra, intervalle, exposition verrouillée, calibrer |
 | **Profils d'apps** | Luminosité fixe par app (ex. `LumaFusion.exe` → 100 %), ou **🎮 Jeu** : l'app se désactive |
 | **Raccourcis** | Clique puis appuie sur la nouvelle combinaison |
@@ -64,7 +71,8 @@ Le blanc de l'écran s'adapte à la **couleur** de la lumière de la pièce : pl
 - **Jeux** : en plein écran (jeux, vidéos) ou pour une app marquée « 🎮 Jeu », l'app se désactive et les couleurs redeviennent normales (réglable).
 - **Pause** quand l'ordi est verrouillé, en veille ou écran éteint : aucune photo webcam.
 - **Au réveil** (sortie de veille, déverrouillage, écran rallumé, fin d'un jeu) : nouvelle mesure **tout de suite**, appliquée sans transition. Si la webcam n'est pas encore prête, l'app réessaie toutes les 2 s.
-- **Économie d'énergie** (sur batterie, ou seulement avec l'économiseur de Windows) : écran plus sombre (−10 % réglable, −5 % de plus avec l'économiseur), 4× moins de photos webcam, transitions plus simples.
+- **Économie d'énergie** (sur batterie, ou seulement avec l'économiseur de Windows) : écran plus sombre (−10 % réglable, −5 % de plus avec l'économiseur), 4× moins de photos webcam, transitions en 3 pas, réveils 2× plus rares.
+- **Absent** : après 3 min sans clavier ni souris, plus de photo webcam (désactivable). La souris qui bouge relance une photo tout de suite.
 - **Mode lecture** (bouton, menu ou Ctrl+Alt+L) : écran 30 % plus sombre et chaud (3800 K).
 
 ## Il apprend de toi

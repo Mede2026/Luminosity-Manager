@@ -233,8 +233,8 @@ static bool AnalyzeFrame(IMFSample *smp, UINT32 w, UINT32 h, bool bottomUp, bool
     return ok;
 }
 
-// Lit des images, laisse la camera se stabiliser, puis fait la moyenne des 3 dernieres (moins de bruit)
-static bool ReadFrames(IMFSourceReader *reader, int frames, UINT32 w, UINT32 h, bool bottomUp, FrameStats *out) {
+// Lit des images, laisse la camera se stabiliser, puis fait la moyenne des "avg" dernieres (moins de bruit)
+static bool ReadFrames(IMFSourceReader *reader, int frames, int avg, UINT32 w, UINT32 h, bool bottomUp, FrameStats *out) {
     FrameStats acc = {};
     int used = 0, got = 0;
     for (int tries = 0; tries < frames * 4 && got < frames; tries++) {
@@ -244,7 +244,7 @@ static bool ReadFrames(IMFSourceReader *reader, int frames, UINT32 w, UINT32 h, 
         if (!smp) continue;
         got++;
         FrameStats st;
-        if (got > frames - 3 && AnalyzeFrame(smp, w, h, bottomUp, got == frames, &st)) {
+        if (got > frames - avg && AnalyzeFrame(smp, w, h, bottomUp, got == frames, &st)) {
             acc.lin += st.lin; acc.mean += st.mean; acc.dark += st.dark; acc.bright += st.bright;
             acc.r += st.r; acc.g += st.g; acc.b += st.b;
             used++;
@@ -262,7 +262,30 @@ static bool ReadFrames(IMFSourceReader *reader, int frames, UINT32 w, UINT32 h, 
     return true;
 }
 
-bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, CamShot *out) {
+// Le plus petit format natif de la camera d'au moins 160x120 : moins de pixels a lire et a convertir.
+static void PickSmallFormat(IMFSourceReader *reader) {
+    IMFMediaType *best = NULL;
+    UINT64 bestArea = 0;
+    for (DWORD i = 0;; i++) {
+        IMFMediaType *t = NULL;
+        if (FAILED(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, i, &t))) break;
+        UINT32 w = 0, h = 0;
+        if (SUCCEEDED(MFGetAttributeSize(t, MF_MT_FRAME_SIZE, &w, &h)) && w >= 160 && h >= 120 &&
+            (!best || (UINT64)w * h < bestArea)) {
+            if (best) best->Release();
+            best = t;
+            bestArea = (UINT64)w * h;
+        } else {
+            t->Release();
+        }
+    }
+    if (best) {
+        reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, NULL, best);   // si refuse : format par defaut
+        best->Release();
+    }
+}
+
+bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, bool quick, CamShot *out) {
     memset(out, 0, sizeof(*out));
     InitLinear();
     UINT32 count;
@@ -330,6 +353,7 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
     MFCreateAttributes(&ra, 1);
     if (ra) ra->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
     if (SUCCEEDED(MFCreateSourceReaderFromMediaSource(src, ra, &reader))) {
+        PickSmallFormat(reader);
         IMFMediaType *mt = NULL, *cur = NULL;
         MFCreateMediaType(&mt);
         mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
@@ -342,7 +366,8 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
             UINT32 stride = 0;
             bool bottomUp = FAILED(cur->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride)) || (INT32)stride < 0;
             FrameStats st;
-            bool have = ReadFrames(reader, 10, w, h, bottomUp, &st);
+            // Lumiere stable : 5 images, on analyse la derniere. Sinon 10 images, moyenne des 3 dernieres.
+            bool have = quick ? ReadFrames(reader, 5, 1, w, h, bottomUp, &st) : ReadFrames(reader, 10, 3, w, h, bottomUp, &st);
             // Notre propre auto-exposition (sauf si verrouillee) : image ni noire ni blanche, exposition connue
             for (int i = 0; have && out->manual && !lockExposure && i < 6; i++) {
                 long ne = e;
@@ -353,7 +378,7 @@ bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, 
                 if (ne == e) break;
                 e = ne;
                 cc->Set(CameraControl_Exposure, e, CameraControl_Flags_Manual);
-                have = ReadFrames(reader, 6, w, h, bottomUp, &st);
+                have = ReadFrames(reader, 6, 3, w, h, bottomUp, &st);
             }
             if (have) {
                 out->mean = st.mean;

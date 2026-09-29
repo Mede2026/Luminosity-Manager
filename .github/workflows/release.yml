@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<EOF
-          Télécharge **LuminosityManager.exe** ci-dessous et double-clique dessus. Aucune installation.
+          Télécharge **LuminosityManager.exe** ci-dessous, double-clique dessus, puis clique sur **Installer** (pas besoin d'être administrateur).
           Si une version précédente est déjà installée, elle se met à jour toute seule (page « Mises à jour »).
 
           Nouveautés et mode d'emploi : voir le [README](https://github.com/${{ github.repository }}#readme).

@@ -149,3 +149,28 @@ bool ParseSha256(const char *text, char out[65]) {
     out[64] = 0;
     return true;
 }
+
+bool QuickPhotoOk(double prevLux, double lastLux, int clip) {
+    if (prevLux < 0 || lastLux < 0 || clip != 0) return false;
+    return fabs(log10((lastLux + 1) / (prevLux + 1))) < log10(1.15);
+}
+
+int EcoStep(int diff) {
+    int d = diff < 0 ? -diff : diff;
+    int s = (d + 2) / 3;                                  // arrondi au-dessus
+    return s < 1 ? 1 : s;
+}
+
+unsigned NextWakeMs(bool visible, bool sensor, bool eco, unsigned msToCamera, unsigned msToMinute) {
+    if (visible) return 1000;
+    if (sensor) return eco ? 4000 : 2000;
+    unsigned w = eco ? 30000 : 15000;
+    if (msToCamera < w) w = msToCamera;
+    if (msToMinute < w) w = msToMinute;
+    return w < 500 ? 500 : w;
+}
+
+double CpuPercent(double cpuMs, double minutes) {
+    if (minutes <= 0 || cpuMs <= 0) return 0;
+    return cpuMs / (minutes * 60000.0) * 100.0;
+}
