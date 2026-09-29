@@ -1,6 +1,6 @@
 # Luminosity Manager
 
-Application Windows légère (**~470 Ko**, installation en un clic, sans droits administrateur) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
+Application Windows légère (**~520 Ko**, installation en un clic, sans droits administrateur) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
 
 ## Utilisation
 1. Va dans **Releases** (à droite sur la page GitHub) et télécharge `LuminosityManager.exe`.
@@ -115,7 +115,8 @@ L'app n'est pas signée (un certificat coûte cher). Microsoft Defender la prend
 - `src/webview2/WebView2.h` : généré avec `widl` depuis l'IDL officiel du SDK WebView2 (licence dans ce dossier).
 - Calculs purs (courbe, apprentissage, soleil, couleurs…) : `src/core.cpp`, testés par `tests/` (`./tests/run.sh`). GitHub lance les tests à chaque envoi, et avant chaque Release.
 - Statistiques : `src/stats.cpp` ; sauvegarde : `src/backup.cpp` ; installation, copie de secours, retour arrière, désinstallation : `src/install.cpp`.
-- Compiler : `./build.sh` (MinGW-w64). La version vient du fichier `VERSION`.
+- Compiler : `./build.sh` (MinGW-w64, Linux) ou `build-msvc.cmd` (Visual Studio, Windows). La version vient du fichier `VERSION`.
+- **Les Releases sont compilées avec Visual Studio (MSVC)** sur GitHub, puis l'app est lancée sur un vrai Windows avant d'être publiée. Les `.exe` MSVC sont moins souvent pris pour des virus par Sécurité Windows que ceux de MinGW.
 - Icônes : `python3 src/make_icon.py`.
 - Police : [Inter](https://rsms.me/inter/) (licence SIL OFL 1.1, voir `src/ui/fonts/`), intégrée dans l'app.
 - **Publier une version** : changer le numéro dans `VERSION` et pousser → GitHub Actions compile et crée la Release.
