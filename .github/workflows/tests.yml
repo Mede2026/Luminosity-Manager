@@ -27,6 +27,14 @@ jobs:
       - name: Compiler avec MSVC
         shell: cmd
         run: build-msvc.cmd
+      - name: Test sur un vrai Windows (l'app demarre et tourne 20 s)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\LuminosityManager.exe -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { Write-Error "L'app s'est arretee (code $($p.ExitCode))"; exit 1 }
+          Write-Host "L'app tourne. Memoire : $([math]::Round($p.WorkingSet64 / 1MB, 1)) Mo"
+          Stop-Process -Id $p.Id -Force
       - name: Aucune DLL a installer (seulement celles de Windows)
         shell: bash
         run: |
