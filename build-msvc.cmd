@@ -20,6 +20,6 @@ cl /nologo /utf-8 /O1 /MT /Gy /Gw /GR- /W3 /DUNICODE /D_UNICODE /D_CRT_SECURE_NO
   /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /OPT:REF /OPT:ICF ^
   kernel32.lib user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib wbemuuid.lib ^
   dxva2.lib mfplat.lib mf.lib mfreadwrite.lib mfuuid.lib strmiids.lib propsys.lib comctl32.lib ^
-  winhttp.lib dwmapi.lib bcrypt.lib comdlg32.lib crypt32.lib wtsapi32.lib powrprof.lib || exit /b 1
+  winhttp.lib dwmapi.lib bcrypt.lib comdlg32.lib crypt32.lib wtsapi32.lib powrprof.lib sensorsapi.lib || exit /b 1
 del /q src\*.obj src\app.res src\ui.bundle.html 2>nul
 dir LuminosityManager.exe | findstr LuminosityManager
