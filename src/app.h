@@ -40,7 +40,7 @@
 #define WM_LEARNED       (WM_APP + 7)   // wParam : ecart appris (luminosite changee a la main)
 
 enum { SRC_SENSOR, SRC_CAMERA, SRC_SUN };
-enum { HK_UP, HK_DOWN, HK_MEASURE, HK_TOGGLE, HK_COUNT };
+enum { HK_UP, HK_DOWN, HK_MEASURE, HK_TOGGLE, HK_READ, HK_COUNT };
 
 static const int MIN_INTERVAL = 5, MAX_INTERVAL = 3600;   // secondes entre 2 photos webcam
 static const int HIST_LEN = 1440;                         // 24 h, un point par minute
@@ -65,6 +65,19 @@ extern volatile LONG g_applied, g_learnNow;      // luminosite voulue ; ajout ap
 extern volatile LONG g_trueTone, g_ttStrength;   // True Tone active ; intensite 0..100
 extern volatile LONG g_ambientK, g_displayK;     // couleur de la lumiere / du blanc de l'ecran (Kelvin)
 extern volatile LONG g_ttSource, g_ttOk;         // 1 capteur, 2 webcam, 3 heure ; 0 = Windows a refuse
+
+// Pauses, batterie, mode lecture (notifications de Windows recues par la fenetre)
+extern volatile LONG g_locked, g_displayOff, g_suspended;   // session verrouillee / ecran eteint / veille
+extern volatile LONG g_onBattery, g_batterySaver;
+extern volatile LONG g_pauseFullscreen;          // reglage : pause pendant les jeux / videos en plein ecran
+extern volatile LONG g_batteryMode, g_batteryCut;// economie d'energie : 0 jamais, 1 sur batterie, 2 economiseur ; % en moins
+extern volatile LONG g_ecoActive;                // economie d'energie en cours
+extern volatile LONG g_uiVisible;                // la fenetre est ouverte (mesures plus frequentes)
+extern volatile LONG g_readMode;                 // mode lecture actif
+extern volatile LONG g_pauseReason;              // 0 aucune, 1 verrouille, 2 ecran eteint, 3 veille, 4 plein ecran, 5 jeu
+extern volatile LONG g_camBusy;                  // la webcam est utilisee par une autre app
+extern volatile LONG g_osBright, g_osBrightSeq;  // luminosite annoncee par Windows (notification)
+enum { PAUSE_NONE, PAUSE_LOCKED, PAUSE_SCREEN_OFF, PAUSE_SLEEP, PAUSE_FULLSCREEN, PAUSE_GAME };
 enum { TT_NONE, TT_SENSOR, TT_CAMERA, TT_SUN };
 
 // La courbe lumiere -> luminosite (core.h), et ce que l'app a appris de toi
@@ -95,6 +108,31 @@ LONG NowMinute();
 void HistLoad();
 void HistSave();
 
+// stats.cpp : statistiques
+struct StatsSample {
+    bool off, paused, reading, battery;
+    int bright;                   // % de luminosite
+    double lux;                   // lumiere (-1 = inconnue)
+    int source;                   // 0 capteur, 1 webcam, 2 soleil
+    int trueToneK;                // blanc de l'ecran (0 = True Tone coupe)
+    const wchar_t *app;           // app du profil actif (ou NULL)
+};
+enum { STAT_PHOTO, STAT_ADJUST, STAT_MANUAL };
+void StatsLoad();
+void StatsSave();
+void StatsMinute(const StatsSample &s);
+void StatsEvent(int type);
+void StatsReset();
+struct JsonOut;
+void StatsJson(JsonOut &j);
+bool AppDataFile(const wchar_t *name, wchar_t *path, bool create);   // %APPDATA%\LuminosityManager\name
+
+// backup.cpp : exporter / importer toutes les donnees
+bool ExportData(wchar_t *result, int n);
+bool ImportData(wchar_t *result, int n);         // true = l'app doit redemarrer
+extern volatile LONG g_noSaveOnExit;
+void RequestRestart();                            // net.cpp : relancer l'app en quittant
+
 // Registre
 DWORD RegGet(const wchar_t *name, DWORD def);
 void RegPut(const wchar_t *name, DWORD v);
@@ -106,7 +144,7 @@ void SetStartup(bool on);
 // light.cpp : mesure de la lumiere
 bool SensorReadLux(double *lux, double *kelvin, bool retryNow);   // kelvin = -1 si inconnu
 void SensorClose();
-static const int THUMB_W = 64, THUMB_H = 48;
+static const int THUMB_W = 160, THUMB_H = 120;   // miniature webcam en couleur (RGB)
 struct CamShot {
     int mean;                  // clarte moyenne de l'image (0..255)
     double lin;                // lumiere reelle moyenne de l'image (0..1, sans gamma, lampes ignorees)
@@ -116,18 +154,21 @@ struct CamShot {
     double kelvin;             // couleur de la lumiere (Kelvin), -1 si inconnue
     bool kelvinFromCam;        // mesuree par la balance des blancs de la camera
 };
-extern BYTE g_thumb[THUMB_W * THUMB_H];          // miniature en gris de la derniere photo
+extern BYTE *g_thumb;                            // miniature couleur (R, G, B) de la derniere photo
 extern volatile LONG g_thumbValid;
 extern wchar_t g_camUsed[128];                   // camera reellement utilisee
 int ListCameras(wchar_t names[][128], int max);
 bool WebcamMeasure(const wchar_t *preferred, long *exposure, bool lockExposure, CamShot *out);
 double SunElevation(double lat, double lon);
+bool WebcamBusyElsewhere();                      // une autre app utilise la camera (Teams, Discord...)
 
 // brightness.cpp : luminosite des ecrans
 void BrightnessInit();
 int BrightnessGet();
 void BrightnessSet(int pct);
 void BrightnessShutdown();
+void BrightnessDisplaysChanged();                  // ecrans branches / debranches
+extern volatile LONG g_externalBrightness;        // regler aussi les ecrans externes (DDC/CI)
 bool ColorApply(double r, double g, double b);     // True Tone : facteurs rouge / vert / bleu (0..1)
 void ColorReset();                                 // couleurs normales
 
@@ -137,11 +178,14 @@ extern wchar_t g_cityResult[160];
 void StartUpdateCheck();
 void StartUpdateDownload();
 void StartCitySearch(const wchar_t *city);
+void StartLocate();                              // position automatique (d'apres la connexion internet)
 bool LaunchUpdatedAndExit();
 
 // json.cpp : lire / ecrire du JSON simple
 bool JsonString(const char *src, const char *key, wchar_t *out, int n);
 bool JsonNumber(const char *src, const char *key, double *v);
+typedef void (*JsonEntryFn)(const wchar_t *key, bool isStr, const wchar_t *str, double num, void *user);
+void JsonForEach(const char *json, JsonEntryFn fn, void *user);   // chaque "cle": valeur d'un objet plat
 struct JsonOut {                                  // construit un texte JSON (a liberer avec free(buf))
     wchar_t *buf = NULL;
     size_t len = 0, cap = 0;

@@ -2,11 +2,12 @@
 // L'interface elle-meme est dans src/ui/ (HTML, CSS, JavaScript) ; ici on echange des messages JSON avec elle.
 #include "app.h"
 #include <dwmapi.h>
+#include <wtsapi32.h>
 #include <limits.h>
 #include <stdio.h>
 
-enum { ID_OPEN = 100, ID_MEASURE, ID_TOGGLE, ID_BRIGHTER, ID_DARKER, ID_QUIT };
-enum { TIMER_UPD_FIRST = 1, TIMER_UPD_DAILY };
+enum { ID_OPEN = 100, ID_MEASURE, ID_TOGGLE, ID_BRIGHTER, ID_DARKER, ID_READ, ID_QUIT };
+enum { TIMER_UPD_FIRST = 1, TIMER_UPD_DAILY, TIMER_LOCATE };
 
 HWND g_hwnd;
 WORD g_hotkeys[HK_COUNT];
@@ -15,7 +16,10 @@ static const WORD DEFAULT_HOTKEYS[HK_COUNT] = {
     MAKEWORD(VK_DOWN, HOTKEYF_CONTROL | HOTKEYF_ALT),
     MAKEWORD('M', HOTKEYF_CONTROL | HOTKEYF_ALT),
     MAKEWORD('A', HOTKEYF_CONTROL | HOTKEYF_ALT),
+    MAKEWORD('L', HOTKEYF_CONTROL | HOTKEYF_ALT),
 };
+// Economiseur de batterie de Windows (pas dans les en-tetes MinGW)
+static const GUID GUID_POWER_SAVING = { 0xe00958c0, 0xc213, 0x4ace, { 0xac, 0x77, 0xfe, 0xcc, 0xed, 0x2e, 0xee, 0xa5 } };
 
 static NOTIFYICONDATAW g_nid;
 static HICON g_iconOn, g_iconOff;
@@ -149,6 +153,16 @@ static void SendState() {
     j.Num(L"displayK", g_displayK);
     j.Num(L"ttSource", g_ttSource);
     j.Bool(L"ttOk", g_ttOk);
+    j.Num(L"pauseReason", g_pauseReason);
+    j.Bool(L"camBusy", g_camBusy);
+    j.Bool(L"onBattery", g_onBattery);
+    j.Bool(L"batterySaver", g_batterySaver);
+    j.Bool(L"ecoActive", g_ecoActive);
+    j.Num(L"batteryMode", g_batteryMode);
+    j.Num(L"batteryCut", g_batteryCut);
+    j.Bool(L"pauseFullscreen", g_pauseFullscreen);
+    j.Bool(L"readMode", g_readMode);
+    j.Bool(L"external", g_externalBrightness);
     j.Num(L"ago", g_lastMeasure ? (double)((GetTickCount() - (DWORD)g_lastMeasure) / 1000) : -1);
     j.Num(L"camNext", g_camNext);
     j.Bool(L"useCam", g_useCam);
@@ -192,12 +206,13 @@ static void SendHist() {
     g_sentHist = last;
 }
 
-// Miniature webcam 64x48 en gris, encodee en base64
+// Miniature webcam 160x120 en couleur (RGB), encodee en base64
 static void SendThumb() {
-    if (!g_pageReady || !g_thumbValid) return;
+    if (!g_pageReady || !g_thumbValid || !g_thumb) return;
     static const char *B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    static wchar_t enc[(THUMB_W * THUMB_H + 2) / 3 * 4 + 1];
-    int n = THUMB_W * THUMB_H, o = 0;
+    int n = THUMB_W * THUMB_H * 3, o = 0;
+    wchar_t *enc = (wchar_t *)malloc(((n + 2) / 3 * 4 + 1) * sizeof(wchar_t));
+    if (!enc) return;
     for (int i = 0; i < n; i += 3) {
         unsigned v = g_thumb[i] << 16 | (i + 1 < n ? g_thumb[i + 1] << 8 : 0) | (i + 2 < n ? g_thumb[i + 2] : 0);
         enc[o++] = B64[(v >> 18) & 63];
@@ -211,6 +226,7 @@ static void SendThumb() {
     j.Num(L"w", THUMB_W);
     j.Num(L"h", THUMB_H);
     j.KStr(L"data", enc);
+    free(enc);
     Post(j);
     g_sentThumb = g_lastMeasure;
 }
@@ -302,6 +318,21 @@ static void Notice(const wchar_t *text) {
     Post(j);
 }
 
+static void SendStats() {
+    if (!g_pageReady) return;
+    JsonOut j;
+    Begin(j, L"stats");
+    StatsJson(j);
+    Post(j);
+}
+
+static void ToggleRead() {
+    g_readMode = !g_readMode;
+    g_force = 1;                                 // on applique tout de suite
+    SetEvent(g_wakeEvent);
+    SendState();
+}
+
 static void SendInit() {
     wchar_t accent[8];
     AccentHex(accent);
@@ -376,6 +407,8 @@ static void Nudge(int delta) {
 
 static void ShowMainWindow(const wchar_t *page = NULL) {
     ShowWindow(g_hwnd, IsIconic(g_hwnd) ? SW_RESTORE : SW_SHOW);
+    g_uiVisible = 1;
+    SetEvent(g_wakeEvent);
     SetForegroundWindow(g_hwnd);
     if (page) {
         wcsncpy(g_pendingPage, page, 15);
@@ -387,6 +420,7 @@ static void ShowMainWindow(const wchar_t *page = NULL) {
 // Cacher la fenetre = fermer le navigateur (la memoire est rendue a Windows)
 static void HideMainWindow() {
     ShowWindow(g_hwnd, SW_HIDE);
+    g_uiVisible = 0;
     g_pageReady = false;
     WebViewDestroy();
     RegisterHotkeys();                           // au cas ou une saisie de raccourci etait en cours
@@ -394,6 +428,7 @@ static void HideMainWindow() {
 
 void OnWebViewFailed() {
     g_pageReady = false;
+    g_uiVisible = 0;
     ShowWindow(g_hwnd, SW_HIDE);
     if (MessageBoxW(NULL, L"La fenêtre a besoin de Microsoft Edge WebView2, qui n'est pas installé sur ce PC.\n\n"
                           L"L'app continue de fonctionner près de l'horloge.\n"
@@ -412,7 +447,7 @@ static void AddProfile(const char *json) {
     wchar_t exe[64] = L"";
     JsonString(json, "exe", exe, 60);
     int pct = Num(json, "pct", 100);
-    if (!exe[0] || pct < 1 || pct > 100) return;
+    if (!exe[0] || pct < 0 || pct > 100) return;          // 0 = jeu : l'app se desactive
     if (!wcschr(exe, L'.')) wcscat(exe, L".exe");
     EnterCriticalSection(&g_lock);
     int i = 0;
@@ -519,6 +554,25 @@ void OnPageMessage(const char *json) {
         SetEvent(g_wakeEvent);
         SendState();
     }
+    else if (!wcscmp(cmd, L"setReadMode"))   { if ((value != 0) != (g_readMode != 0)) ToggleRead(); }
+    else if (!wcscmp(cmd, L"setPauseFullscreen")) { g_pauseFullscreen = value != 0; RegPut(L"PauseFullscreen", g_pauseFullscreen); SendState(); }
+    else if (!wcscmp(cmd, L"setBatteryMode")) { g_batteryMode = Clamp(value, 0, 2); RegPut(L"BatteryMode", g_batteryMode); SetEvent(g_wakeEvent); SendState(); }
+    else if (!wcscmp(cmd, L"setBatteryCut"))  { g_batteryCut = Clamp(value, 0, 50); RegPut(L"BatteryCut", g_batteryCut); SetEvent(g_wakeEvent); SendState(); }
+    else if (!wcscmp(cmd, L"setExternal"))    { g_externalBrightness = value != 0; RegPut(L"ExternalBrightness", g_externalBrightness); SendState(); }
+    else if (!wcscmp(cmd, L"getStats"))       SendStats();
+    else if (!wcscmp(cmd, L"resetStats"))     { StatsReset(); SendStats(); Notice(L"Statistiques remises à zéro."); }
+    else if (!wcscmp(cmd, L"locate"))         StartLocate();
+    else if (!wcscmp(cmd, L"exportData")) {
+        wchar_t msg[300];
+        ExportData(msg, 300);
+        if (msg[0]) Notice(msg);
+    }
+    else if (!wcscmp(cmd, L"importData")) {
+        wchar_t msg[300];
+        bool restart = ImportData(msg, 300);
+        if (msg[0]) Notice(msg);
+        if (restart) { RequestRestart(); DestroyWindow(g_hwnd); }
+    }
     else if (!wcscmp(cmd, L"resetLearning")) {
         ResetLearning();
         Notice(L"L'app a oublié ce qu'elle avait appris : retour à la courbe de base.");
@@ -583,6 +637,7 @@ static void ShowMenu() {
     AppendMenuW(m, MF_STRING | (g_enabled ? 0 : MF_GRAYED), ID_MEASURE, L"Mesurer maintenant");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING | (g_enabled ? MF_CHECKED : 0), ID_TOGGLE, L"Activé");
+    AppendMenuW(m, MF_STRING | (g_readMode ? MF_CHECKED : 0), ID_READ, L"Mode lecture");
     AppendMenuW(m, MF_STRING, ID_BRIGHTER, L"Plus clair (+5 %)");
     AppendMenuW(m, MF_STRING, ID_DARKER, L"Plus sombre (−5 %)");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
@@ -641,9 +696,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             ToggleEnabled(!g_enabled);
             Balloon(g_enabled ? L"Luminosity Manager : activé" : L"Luminosity Manager : désactivé");
             break;
+        case HK_READ:
+            ToggleRead();
+            Balloon(g_readMode ? L"Mode lecture : activé" : L"Mode lecture : désactivé");
+            break;
         }
         return 0;
     case WM_TIMER:
+        if (wp == TIMER_LOCATE) { KillTimer(h, TIMER_LOCATE); StartLocate(); return 0; }
         if (wp == TIMER_UPD_FIRST) KillTimer(h, TIMER_UPD_FIRST);
         if (g_updateCheck) StartUpdateCheck();
         return 0;
@@ -665,6 +725,38 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp) SetEvent(g_wakeEvent);
         SendCity(wp != 0, true);
         return 0;
+    case WM_POWERBROADCAST:                      // veille, batterie, ecran eteint, luminosite changee
+        if (wp == PBT_APMSUSPEND) g_suspended = 1;
+        else if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND) {
+            g_suspended = 0;
+            g_force = 1;                         // au reveil : nouvelle mesure tout de suite
+            SetEvent(g_wakeEvent);
+        } else if (wp == PBT_POWERSETTINGCHANGE) {
+            const POWERBROADCAST_SETTING *ps = (const POWERBROADCAST_SETTING *)lp;
+            DWORD v = ps->DataLength >= sizeof(DWORD) ? *(const DWORD *)ps->Data : 0;
+            if (IsEqualGUID(ps->PowerSetting, GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS)) {
+                g_osBright = (LONG)v;                // Windows nous previent : plus besoin de demander chaque seconde
+                InterlockedIncrement(&g_osBrightSeq);
+                SetEvent(g_wakeEvent);
+            } else if (IsEqualGUID(ps->PowerSetting, GUID_CONSOLE_DISPLAY_STATE)) {
+                g_displayOff = v != 1;               // 0 eteint, 1 allume, 2 attenue
+                if (v == 1) { g_force = 1; SetEvent(g_wakeEvent); }
+            } else if (IsEqualGUID(ps->PowerSetting, GUID_ACDC_POWER_SOURCE)) {
+                g_onBattery = v != 0;                // 0 = branche
+                SetEvent(g_wakeEvent);
+            } else if (IsEqualGUID(ps->PowerSetting, GUID_POWER_SAVING)) {
+                g_batterySaver = v != 0;
+                SetEvent(g_wakeEvent);
+            }
+        }
+        return TRUE;
+    case WM_WTSSESSION_CHANGE:                   // ordi verrouille / deverrouille
+        if (wp == WTS_SESSION_LOCK) g_locked = 1;
+        else if (wp == WTS_SESSION_UNLOCK) { g_locked = 0; g_force = 1; SetEvent(g_wakeEvent); }
+        return 0;
+    case WM_DISPLAYCHANGE:                       // ecran branche / debranche
+        BrightnessDisplaysChanged();
+        return DefWindowProcW(h, msg, wp, lp);
     case WM_SIZE:
         WebViewResize();
         return 0;
@@ -701,6 +793,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case ID_OPEN:     ShowMainWindow(); break;
         case ID_MEASURE:  g_force = 1; SetEvent(g_wakeEvent); break;
         case ID_TOGGLE:   ToggleEnabled(!g_enabled); break;
+        case ID_READ:     ToggleRead(); break;
         case ID_BRIGHTER: Nudge(+5); break;
         case ID_DARKER:   Nudge(-5); break;
         case ID_QUIT:     DestroyWindow(h); break;
@@ -710,6 +803,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         HideMainWindow();
         return 0;
     case WM_DESTROY:
+        WTSUnRegisterSessionNotification(h);
         WebViewDestroy();
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         PostQuitMessage(0);
@@ -761,6 +855,19 @@ bool CreateMainWindow(HINSTANCE inst, bool showWindow, int) {
     wcscpy(g_nid.szTip, APP_NAME);
     AddTrayIcon();
     RegisterHotkeys();
+
+    // Windows nous previent : veille, ecran eteint, batterie, economiseur, luminosite changee, verrouillage
+    const GUID *powerGuids[5] = { &GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS, &GUID_CONSOLE_DISPLAY_STATE,
+                                  &GUID_ACDC_POWER_SOURCE, &GUID_POWER_SAVING, NULL };
+    for (int i = 0; powerGuids[i]; i++) RegisterPowerSettingNotification(g_hwnd, powerGuids[i], DEVICE_NOTIFY_WINDOW_HANDLE);
+    WTSRegisterSessionNotification(g_hwnd, NOTIFY_FOR_THIS_SESSION);
+    SYSTEM_POWER_STATUS ps;
+    if (GetSystemPowerStatus(&ps)) {
+        g_onBattery = ps.ACLineStatus == 0;
+        g_batterySaver = ps.SystemStatusFlag == 1;
+    }
+    // 1er lancement : on trouve la ville tout seul (pour le mode soleil)
+    if (!RegGet(L"AutoLocated", 0) && !RegGet(L"Latitude", 0)) SetTimer(g_hwnd, TIMER_LOCATE, 3000, NULL);
 
     SetTimer(g_hwnd, TIMER_UPD_FIRST, 10 * 1000, NULL);          // 1re verification 10 s apres le lancement
     SetTimer(g_hwnd, TIMER_UPD_DAILY, 24 * 60 * 60 * 1000, NULL);

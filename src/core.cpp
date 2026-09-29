@@ -120,7 +120,7 @@ bool InFaceZone(double x, double y) {
 }
 
 int LightCategory(double lux) {
-    static const double limits[LIGHT_CATS - 1] = { 10, 50, 150, 500, 2000 };
+    static const double limits[LIGHT_CATS - 1] = { 10, 80, 400, 2000 };   // lux
     int c = 0;
     while (c < LIGHT_CATS - 1 && lux >= limits[c]) c++;
     return c;

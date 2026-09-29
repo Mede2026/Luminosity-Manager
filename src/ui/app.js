@@ -17,6 +17,7 @@ function showPage(name) {
   document.querySelectorAll('.nav').forEach((n) => n.classList.toggle('active', n.dataset.page === name));
   document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
   if (name === 'camera') send('listCameras');
+  if (name === 'stats') send('getStats');
   if (name === 'home') drawChart();
   if (name === 'brightness') drawCurve();
 }
@@ -113,12 +114,19 @@ function renderState() {
   const pill = $('status');
   pill.className = 'pill';
   let text;
+  const PAUSES = ['', 'ordi verrouillé', 'écran éteint', 'veille', 'jeu ou vidéo en plein écran', 'jeu (' + s.profileApp + ')'];
   if (!on) { pill.classList.add('off'); text = 'Désactivé : la luminosité ne change plus'; }
+  else if (s.pauseReason > 0) { pill.classList.add('off'); text = 'En pause : ' + PAUSES[s.pauseReason]; }
   else if (s.profilePct >= 0) { pill.classList.add('profile'); text = 'Profil ' + s.profileApp + ' : ' + s.profilePct + ' %'; }
   else {
     pill.classList.add('live');
     text = s.ago < 0 ? 'Première mesure…' : s.ago < 2 ? 'Actif · mesuré à l\'instant' : 'Actif · mesuré il y a ' + s.ago + ' s';
+    if (s.camBusy) text += ' · webcam occupée par une autre app';
   }
+  $('badge-eco').hidden = !(on && s.ecoActive);
+  $('badge-read').hidden = !(on && s.readMode);
+  $('btn-read').classList.toggle('on', !!s.readMode);
+  $('btn-read').querySelector('span').textContent = s.readMode ? 'Quitter la lecture' : 'Mode lecture';
   pill.querySelector('span').textContent = text;
 
   $('source').textContent = SOURCES[s.source] || '—';
@@ -178,6 +186,16 @@ function renderState() {
     q.textContent = (s.camUsed ? s.camUsed + ' · ' : '') + txt;
   }
 
+  // Energie et jeux
+  if (document.activeElement !== $('batteryMode')) $('batteryMode').value = String(s.batteryMode);
+  if (document.activeElement !== $('batteryCut')) { setRange($('batteryCut'), s.batteryCut); $('batteryCut-val').textContent = '−' + s.batteryCut + ' %'; }
+  $('cut-row').classList.toggle('disabled', !s.batteryMode);
+  $('eco-state').textContent = s.ecoActive
+    ? 'Active maintenant (' + (s.batterySaver ? 'économiseur de batterie de Windows' : 'sur batterie') + ').'
+    : !s.batteryMode ? 'Désactivée.' : s.onBattery ? 'Sur batterie, mais pas active (réglée pour l\'économiseur de Windows).' : 'Pas active : le PC est branché.';
+  $('pauseFullscreen').checked = s.pauseFullscreen;
+  $('external').checked = s.external;
+
   // True Tone
   $('tt-home').textContent = !s.trueTone ? 'désactivé' : s.displayK + ' K';
   $('trueTone').checked = s.trueTone;
@@ -222,11 +240,23 @@ function renderThumb(m) {
     const ctx = c.getContext('2d');
     const img = ctx.createImageData(m.w, m.h);
     for (let i = 0; i < m.w * m.h; i++) {
-      const v = bytes.charCodeAt(i);
-      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+      img.data[i * 4] = bytes.charCodeAt(i * 3);
+      img.data[i * 4 + 1] = bytes.charCodeAt(i * 3 + 1);
+      img.data[i * 4 + 2] = bytes.charCodeAt(i * 3 + 2);
       img.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
+    // Zone ignoree (ton visage, eclaire par l'ecran) : meme ovale que dans le programme
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(m.w * 0.5, m.h * 0.58, m.w * 0.25, m.h * 0.40, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fill();
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.stroke();
+    ctx.restore();
   });
   hasPhoto = true;
 }
@@ -417,19 +447,25 @@ function renderProfiles(list) {
   for (const p of list) {
     const row = document.createElement('div');
     row.className = 'profile';
-    row.innerHTML = `<div class="app-icon"></div><div class="name"></div><div class="bar"><i></i></div>
-      <div class="pct">${p.pct} %</div><button class="icon-btn" title="Supprimer"><svg><use href="#i-trash"/></svg></button>`;
+    const game = p.pct === 0;
+    row.innerHTML = `<div class="app-icon"></div><div class="name"></div><div class="bar"${game ? ' hidden' : ''}><i></i></div>
+      <div class="pct${game ? ' game' : ''}">${game ? '🎮 Jeu : app désactivée' : p.pct + ' %'}</div><button class="icon-btn" title="Supprimer"><svg><use href="#i-trash"/></svg></button>`;
     row.querySelector('.app-icon').textContent = p.exe.charAt(0).toUpperCase();
     row.querySelector('.name').textContent = p.exe;
     row.querySelector('.bar i').style.width = p.pct + '%';
-    row.querySelector('.name').onclick = () => { $('p-exe').value = p.exe; setRange($('p-pct'), p.pct); $('p-pct-val').textContent = p.pct + ' %'; };
+    row.querySelector('.name').onclick = () => {
+      $('p-exe').value = p.exe;
+      $('p-game').checked = game;
+      $('p-pct-ctl').classList.toggle('disabled', game);
+      if (!game) { setRange($('p-pct'), p.pct); $('p-pct-val').textContent = p.pct + ' %'; }
+    };
     row.querySelector('button').onclick = () => send('deleteProfile', { text: p.exe });
     box.appendChild(row);
   }
 }
 
 // ---------- Raccourcis ----------
-const KEY_NAMES = ['Plus clair (+5 %)', 'Plus sombre (−5 %)', 'Mesurer maintenant', 'Activer / désactiver l\'app'];
+const KEY_NAMES = ['Plus clair (+5 %)', 'Plus sombre (−5 %)', 'Mesurer maintenant', 'Activer / désactiver l\'app', 'Mode lecture (plus sombre + chaud)'];
 function keyLabel(vk) {
   const special = { 37: '←', 38: '↑', 39: '→', 40: '↓', 32: 'Espace', 13: 'Entrée', 33: 'Page ↑', 34: 'Page ↓',
     36: 'Début', 35: 'Fin', 45: 'Inser', 46: 'Suppr', 107: 'Num +', 109: 'Num −', 187: '=', 189: '-', 188: ',', 190: '.' };
@@ -507,16 +543,27 @@ document.querySelectorAll('.tt-labels span').forEach((sp) => {
   sp.style.transform = k <= 2500 ? 'none' : k >= 8000 ? 'translateX(-100%)' : 'translateX(-50%)';
 });
 
+$('p-game').onchange = (e) => $('p-pct-ctl').classList.toggle('disabled', e.target.checked);
 $('p-pct').oninput = (e) => { setRange(e.target, +e.target.value); $('p-pct-val').textContent = e.target.value + ' %'; };
 $('btn-pick').onclick = () => send('pickApp');
 $('btn-add').onclick = () => {
   const exe = $('p-exe').value.trim();
   if (!exe) { toast('Écris le nom de l\'app ou clique sur « App active ».'); return; }
-  send('addProfile', { exe, pct: +$('p-pct').value });
+  send('addProfile', { exe, pct: $('p-game').checked ? 0 : +$('p-pct').value });   // 0 = jeu : l'app se desactive
   $('p-exe').value = '';
 };
 $('p-exe').onkeydown = (e) => e.key === 'Enter' && $('btn-add').click();
 $('btn-keys-reset').onclick = () => send('resetHotkeys');
+$('btn-read').onclick = () => send('setReadMode', { value: state.readMode ? 0 : 1 });
+$('batteryMode').onchange = (e) => send('setBatteryMode', { value: +e.target.value });
+$('batteryCut').oninput = (e) => { setRange(e.target, +e.target.value); $('batteryCut-val').textContent = '−' + e.target.value + ' %'; };
+$('batteryCut').onchange = (e) => send('setBatteryCut', { value: +e.target.value });
+$('pauseFullscreen').onchange = (e) => send('setPauseFullscreen', { value: e.target.checked ? 1 : 0 });
+$('external').onchange = (e) => send('setExternal', { value: e.target.checked ? 1 : 0 });
+$('btn-locate').onclick = () => { $('city-coords').textContent = 'Recherche de ta position…'; send('locate'); };
+$('btn-export').onclick = () => send('exportData');
+$('btn-import').onclick = () => send('importData');
+$('btn-stats-reset').onclick = () => { if (confirm('Effacer toutes les statistiques ?')) send('resetStats'); };
 
 $('btn-city').onclick = () => {
   const text = $('city').value.trim();
@@ -540,6 +587,222 @@ $('btn-update').onclick = () => send('doUpdate');
 $('btn-repo').onclick = () => send('openRepo');
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 setRange($('p-pct'), 100);
+
+// ---------- Statistiques ----------
+let stats = null;
+let statsRange = 7;
+const CAT_NAMES = ['Nuit', 'Sombre', 'Intérieur', 'Lumineux', 'Plein jour'];
+const CAT_HINTS = ['moins de 10 lux', '10 à 80 lux', '80 à 400 lux', '400 à 2000 lux', 'plus de 2000 lux'];
+const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+const DAYS = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+
+function fmtMin(min) {
+  min = Math.round(min);
+  if (min < 60) return min + ' min';
+  const h = Math.floor(min / 60), m = min % 60;
+  return h + ' h' + (m ? ' ' + pad(m) : '');
+}
+const fmtNum = (n) => Math.round(n).toLocaleString('fr-CA');
+function parseDate(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); }
+function fmtDate(iso, long) {
+  const d = parseDate(iso);
+  return long ? d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() : d.getDate() + ' ' + MONTHS[d.getMonth()];
+}
+
+// Bulle d'info commune a tous les graphiques
+const tip = document.createElement('div');
+tip.className = 'chart-tip';
+tip.hidden = true;
+document.body.appendChild(tip);
+function attachTip(el, html) {
+  el.addEventListener('mouseenter', () => { tip.innerHTML = html; tip.hidden = false; });
+  el.addEventListener('mousemove', (e) => { tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px'; });
+  el.addEventListener('mouseleave', () => (tip.hidden = true));
+}
+
+// Colonnes : items = [{ v: 0..1 ou null, tip }], grid = [{ at: 0..1, label }], xl = [{ i, text }]
+function columns(box, items, grid, xl, color) {
+  box.innerHTML = '';
+  const plot = document.createElement('div');
+  plot.className = 'plot';
+  for (const g of grid) {
+    const line = document.createElement('div');
+    line.className = 'grid-line';
+    line.style.bottom = g.at * 100 + '%';
+    line.innerHTML = '<span></span>';
+    line.firstChild.textContent = g.label;
+    plot.appendChild(line);
+  }
+  let any = false;
+  items.forEach((it) => {
+    const col = document.createElement('div');
+    col.className = 'col' + (it.v == null ? ' nodata' : '');
+    const bar = document.createElement('i');
+    if (it.v != null) { bar.style.height = Math.max(1.5, it.v * 100) + '%'; any = true; }
+    if (color) bar.style.setProperty('--bar', color);
+    col.appendChild(bar);
+    if (it.v != null) attachTip(col, it.tip);
+    plot.appendChild(col);
+  });
+  box.appendChild(plot);
+  const xlab = document.createElement('div');
+  xlab.className = 'xlabels';
+  for (const x of xl) {
+    const sp = document.createElement('span');
+    sp.style.left = ((x.i + 0.5) / items.length) * 100 + '%';
+    sp.textContent = x.text;
+    xlab.appendChild(sp);
+  }
+  box.appendChild(xlab);
+  if (!any) { const n = document.createElement('div'); n.className = 'none'; n.textContent = 'Pas encore de données pour cette période.'; box.appendChild(n); }
+}
+
+// Barres horizontales : rows = [{ label, value, text }]
+function hbars(box, rows, empty) {
+  box.innerHTML = '';
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  rows = rows.filter((r) => r.value > 0);
+  if (!rows.length) { box.innerHTML = '<div class="muted">' + empty + '</div>'; return; }
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'hbar';
+    row.innerHTML = '<span></span><div class="track"><i></i></div><b></b>';
+    row.children[0].textContent = r.label;
+    row.children[0].title = r.label;
+    row.querySelector('i').style.width = (r.value / max) * 100 + '%';
+    row.children[2].textContent = r.text;
+    box.appendChild(row);
+  }
+}
+
+function tile(label, value, note) {
+  const t = document.createElement('div');
+  t.className = 'tile';
+  t.innerHTML = '<span></span><b></b><small></small>';
+  t.children[0].textContent = label;
+  t.children[1].textContent = value;
+  t.children[2].textContent = note || '';
+  return t;
+}
+
+function renderStats() {
+  if (!stats) return;
+  document.querySelectorAll('#stats-range button').forEach((b) => b.classList.toggle('on', +b.dataset.days === statsRange));
+  const days = stats.days.filter((d) => d.ago < statsRange);
+  const sum = (f) => days.reduce((a, d) => a + f(d), 0);
+  const active = sum((d) => d.active);
+  const brightAvg = active ? sum((d) => (d.bright >= 0 ? d.bright * d.active : 0)) / active : -1;
+  const luxW = sum((d) => (d.lux >= 0 ? d.active : 0));
+  const luxAvg = luxW ? Math.pow(10, sum((d) => (d.lux >= 0 ? Math.log10(d.lux + 1) * d.active : 0)) / luxW) - 1 : -1;
+  const ttMin = sum((d) => d.trueTone);
+  const ttAvg = ttMin ? sum((d) => (d.displayK > 0 ? d.displayK * d.trueTone : 0)) / ttMin : -1;
+  // Energie : on compte ~6 W pour un ecran de portable a 100 % (estimation)
+  const wh = sum((d) => (d.bright >= 0 ? (d.active / 60) * 6 * (100 - d.bright) / 100 : 0));
+  const period = statsRange === 1 ? 'aujourd\'hui' : statsRange + ' derniers jours';
+
+  const tiles = $('stats-tiles');
+  tiles.innerHTML = '';
+  tiles.append(
+    tile('Temps actif', fmtMin(active), period),
+    tile('Luminosité moyenne', brightAvg < 0 ? '—' : Math.round(brightAvg) + ' %', 'de l\'écran'),
+    tile('Lumière moyenne', luxAvg < 0 ? '—' : '≈ ' + fmtLux(luxAvg), 'dans ta pièce'),
+    tile('Écran économisé', brightAvg < 0 ? '—' : Math.round(100 - brightAvg) + ' %', brightAvg < 0 ? '' : '≈ ' + (wh >= 10 ? Math.round(wh) : wh.toFixed(1)).toString().replace('.', ',') + ' Wh (estimation)'),
+    tile('Ajustements auto', fmtNum(sum((d) => d.adjusts)), 'changements de lumière'),
+    tile('Réglés par toi', fmtNum(sum((d) => d.manual)), 'appris par l\'app'),
+    tile('Photos webcam', fmtNum(sum((d) => d.photos)), 'jamais enregistrées'),
+    tile('True Tone moyen', ttAvg < 0 ? '—' : Math.round(ttAvg) + ' K', ttAvg < 0 ? '' : kelvinName(ttAvg)),
+  );
+
+  // Colonnes par jour (au moins 7 jours pour que ca reste lisible)
+  const span = Math.max(7, statsRange);
+  const byAgo = new Map(stats.days.map((d) => [d.ago, d]));
+  const today = parseDate(stats.today);
+  const slots = [];
+  for (let ago = span - 1; ago >= 0; ago--) {
+    const date = new Date(today); date.setDate(today.getDate() - ago);
+    slots.push({ date, d: byAgo.get(ago) });
+  }
+  const every = span <= 7 ? 1 : span <= 30 ? 5 : 15;
+  const xl = slots.map((sl, i) => ({ i, text: span <= 7 ? DAYS[sl.date.getDay()] : sl.date.getDate() + ' ' + MONTHS[sl.date.getMonth()] }))
+    .filter((x, i) => (slots.length - 1 - i) % every === 0);
+  const dayTitle = (sl) => sl.date.getDate() + ' ' + MONTHS[sl.date.getMonth()];
+  columns($('chart-days-bright'), slots.map((sl) => ({
+    v: sl.d && sl.d.bright >= 0 && sl.d.active ? sl.d.bright / 100 : null,
+    tip: sl.d ? `<b>${dayTitle(sl)}</b>Écran : ${Math.round(sl.d.bright)} % en moyenne<br>Actif : ${fmtMin(sl.d.active)}` : '',
+  })), [{ at: 0.5, label: '50 %' }, { at: 1, label: '100 %' }], xl);
+  const luxScale = (lux) => Math.log10(lux + 1) / Math.log10(8001);
+  columns($('chart-days-lux'), slots.map((sl) => ({
+    v: sl.d && sl.d.lux >= 0 && sl.d.active ? luxScale(sl.d.lux) : null,
+    tip: sl.d ? `<b>${dayTitle(sl)}</b>Lumière : ≈ ${fmtLux(sl.d.lux)} en moyenne<br>de ${fmtLux(Math.max(0, sl.d.minLux))} à ${fmtLux(sl.d.maxLux)}` : '',
+  })), [{ at: luxScale(10), label: '10' }, { at: luxScale(100), label: '100' }, { at: luxScale(1000), label: '1000' }], xl, 'var(--light)');
+
+  // Journee type (depuis le debut)
+  const hours = stats.hours.map((h, i) => ({
+    v: h[0] >= 0 ? h[0] / 100 : null,
+    tip: `<b>${i}h à ${i + 1}h</b>Écran : ${Math.round(h[0])} % en moyenne<br>Lumière : ≈ ${fmtLux(Math.max(0, h[1]))}`,
+  }));
+  columns($('chart-hours'), hours, [{ at: 0.5, label: '50 %' }, { at: 1, label: '100 %' }],
+    [0, 3, 6, 9, 12, 15, 18, 21].map((i) => ({ i, text: i + 'h' })));
+
+  // Categories de lumiere : barre empilee + legende
+  const cats = [0, 1, 2, 3, 4].map((c) => sum((d) => d.cat[c] || 0));
+  const catTotal = cats.reduce((a, b) => a + b, 0);
+  const box = $('chart-cats');
+  box.innerHTML = '';
+  if (!catTotal) box.innerHTML = '<div class="muted">Pas encore de données pour cette période.</div>';
+  else {
+    const stack = document.createElement('div');
+    stack.className = 'stack';
+    cats.forEach((m, c) => {
+      if (!m) return;
+      const seg = document.createElement('i');
+      seg.style.flex = String(m);
+      seg.style.background = `var(--ord-${c + 1})`;
+      attachTip(seg, `<b>${CAT_NAMES[c]}</b>${CAT_HINTS[c]}<br>${fmtMin(m)} · ${Math.round((m / catTotal) * 100)} %`);
+      stack.appendChild(seg);
+    });
+    const legend = document.createElement('div');
+    legend.className = 'legend-grid';
+    cats.forEach((m, c) => {
+      const it = document.createElement('div');
+      it.className = 'legend-item';
+      it.innerHTML = `<i style="background:var(--ord-${c + 1})"></i><span>${CAT_NAMES[c]} <small>${CAT_HINTS[c]}</small></span><b>${Math.round((m / catTotal) * 100)} %</b>`;
+      legend.appendChild(it);
+    });
+    box.append(stack, legend);
+  }
+
+  hbars($('chart-time'), [
+    { label: 'Actif', value: active, text: fmtMin(active) },
+    { label: 'En pause', value: sum((d) => d.paused), text: fmtMin(sum((d) => d.paused)) },
+    { label: 'App désactivée', value: sum((d) => d.off), text: fmtMin(sum((d) => d.off)) },
+    { label: 'Mode lecture', value: sum((d) => d.reading), text: fmtMin(sum((d) => d.reading)) },
+    { label: 'Économie d\'énergie', value: sum((d) => d.battery), text: fmtMin(sum((d) => d.battery)) },
+  ], 'Pas encore de données.');
+  const src = [0, 1, 2].map((i) => sum((d) => d.src[i] || 0));
+  hbars($('chart-src'), [
+    { label: 'Capteur de lumière', value: src[0], text: fmtMin(src[0]) },
+    { label: 'Webcam', value: src[1], text: fmtMin(src[1]) },
+    { label: 'Soleil (heure)', value: src[2], text: fmtMin(src[2]) },
+  ], 'Pas encore de données.');
+  hbars($('chart-apps'), stats.apps.slice().sort((a, b) => b.minutes - a.minutes)
+    .map((a) => ({ label: a.exe, value: a.minutes, text: fmtMin(a.minutes) })), 'Aucun profil d\'app utilisé pour l\'instant.');
+
+  $('stats-since').textContent = 'depuis le ' + fmtDate(stats.since, true);
+  const tot = $('stats-totals');
+  tot.innerHTML = '';
+  [['Temps actif', fmtMin(stats.totalMinutes)], ['Photos webcam', fmtNum(stats.totalPhotos)],
+   ['Ajustements auto', fmtNum(stats.totalAdjusts)], ['Réglés par toi', fmtNum(stats.totalManual)],
+   ['En mode lecture', fmtMin(stats.totalReading)], ['En pause', fmtMin(stats.totalPaused)]].forEach(([k, v]) => {
+    const d = document.createElement('div');
+    d.innerHTML = '<span></span><b></b>';
+    d.children[0].textContent = k;
+    d.children[1].textContent = v;
+    tot.appendChild(d);
+  });
+}
+document.querySelectorAll('#stats-range button').forEach((b) => (b.onclick = () => { statsRange = +b.dataset.days; renderStats(); }));
+setInterval(() => { if (document.querySelector('#page-stats.active')) send('getStats'); }, 60000);
 
 // ---------- Messages du programme ----------
 function onMessage(m) {
@@ -611,6 +874,10 @@ function onMessage(m) {
     case 'notice':
       toast(m.text);
       break;
+    case 'stats':
+      stats = m;
+      renderStats();
+      break;
     case 'nav':
       showPage(m.page);
       break;
@@ -637,16 +904,17 @@ function demo() {
   }
   onMessage({ type: 'init', version: '0.4', mica: false, accent: '#0067c0', curve: [[0, 0], [3, 0.04], [10, 0.12], [30, 0.25], [80, 0.38], [200, 0.52], [400, 0.64], [800, 0.77], [1500, 0.88], [3000, 0.96], [8000, 1]] });
   onMessage({ type: 'hist', nowMin, light, bright });
-  onMessage({ type: 'profiles', list: [{ exe: 'LumaFusion.exe', pct: 100 }, { exe: 'rekordbox.exe', pct: 70 }] });
+  onMessage({ type: 'profiles', list: [{ exe: 'LumaFusion.exe', pct: 100 }, { exe: 'rekordbox.exe', pct: 70 }, { exe: 'GeometryDash.exe', pct: 0 }] });
   onMessage({ type: 'cameras', list: ['Integrated Camera', 'Integrated IR Camera'], choice: '' });
   onMessage({ type: 'city', ok: true, searched: false, name: 'Boucherville, Québec, Canada', lat: 45.59, lon: -73.44 });
   onMessage({ type: 'update', status: 'latest', version: '', current: '0.4' });
-  onMessage({ type: 'hotkeys', list: [{ vk: 38, mods: 6 }, { vk: 40, mods: 6 }, { vk: 77, mods: 6 }, { vk: 65, mods: 6, failed: false }] });
-  const w = 64, h = 48;
+  onMessage({ type: 'hotkeys', list: [{ vk: 38, mods: 6 }, { vk: 40, mods: 6 }, { vk: 77, mods: 6 }, { vk: 65, mods: 6 }, { vk: 76, mods: 6 }] });
+  const w = 160, h = 120;
   let px = '';
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const v = 70 + 110 * Math.exp(-((x - 44) ** 2 + (y - 14) ** 2) / 300) + 30 * (y / h);
-    px += String.fromCharCode(Math.min(255, v | 0));
+    const lamp = Math.exp(-((x - 118) ** 2 + (y - 30) ** 2) / 900);
+    const base = 60 + 40 * (y / h);
+    px += String.fromCharCode(Math.min(255, base + 170 * lamp | 0), Math.min(255, base + 150 * lamp | 0), Math.min(255, base - 10 + 110 * lamp | 0));
   }
   onMessage({ type: 'thumb', w, h, data: btoa(px) });
   let ago = 3;
@@ -654,9 +922,28 @@ function demo() {
     onMessage({ type: 'state', enabled: true, bright: 72, lux: 340, source: 'camera', sunElev: 12, detected: 67, offset: 5,
       min: 10, max: 100, applied: 72, learnNow: 0, level: 0.6, learn: [8, 3, 0, 0, 0], camLocked: false, camLockValue: -6,
       camExposure: -6, camExpMin: -11, camExpMax: -2, camExpStep: 1, camLogUnits: true, camManualOk: true, camClip: 0, trueTone: true, ttStrength: 60, ambientK: 3400, displayK: 5300, ttSource: 2, ttOk: true, ago: ago++ % 30, camNext: 30 - (ago % 30), useCam: true, camInterval: 30, camQuality: 0,
-      camLevel: 46, startup: true, updateCheck: true, lat: 45.59, lon: -73.44, camUsed: 'Integrated Camera', profileApp: '', profilePct: -1 });
+      camLevel: 46, startup: true, updateCheck: true, lat: 45.59, lon: -73.44, camUsed: 'Integrated Camera', profileApp: '', profilePct: -1, pauseReason: 0, camBusy: false, onBattery: true, batterySaver: false, ecoActive: true,
+      batteryMode: 1, batteryCut: 10, pauseFullscreen: true, readMode: false, external: true });
   };
   tick();
   setInterval(tick, 1000);
+  // statistiques factices (40 jours)
+  const sd = [], iso = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let ago = 39; ago >= 0; ago--) {
+    if (ago === 12 || ago === 13) continue;               // jours sans l'ordi
+    const d = new Date(); d.setDate(d.getDate() - ago);
+    const active = Math.round(120 + rnd() * 360), lux = 40 + rnd() * 400;
+    sd.push({ date: iso(d), ago, active, paused: Math.round(rnd() * 90), off: Math.round(rnd() * 20), reading: Math.round(rnd() * 40),
+      battery: Math.round(rnd() * 150), trueTone: active, bright: 35 + rnd() * 40, lux, minLux: 2, maxLux: 1800, displayK: 5200 + rnd() * 900,
+      src: [0, Math.round(active * 0.8), Math.round(active * 0.2)],
+      cat: [Math.round(active * 0.12), Math.round(active * 0.25), Math.round(active * 0.4), Math.round(active * 0.18), Math.round(active * 0.05)],
+      adjusts: Math.round(10 + rnd() * 40), manual: Math.round(rnd() * 4), photos: Math.round(active * 2) });
+  }
+  onMessage({ type: 'stats', today: iso(new Date()), since: sd[0].date, days: sd,
+    hours: Array.from({ length: 24 }, (_, h) => [h < 7 ? -1 : 20 + 50 * Math.max(0, Math.sin(((h - 6) / 15) * Math.PI)), 20 + 500 * Math.max(0, Math.sin(((h - 6) / 14) * Math.PI))]),
+    apps: [{ exe: 'LumaFusion.exe', minutes: 540 }, { exe: 'GeometryDash.exe', minutes: 310 }, { exe: 'rekordbox.exe', minutes: 185 }],
+    totalMinutes: 12040, totalPhotos: 21400, totalAdjusts: 1260, totalManual: 38, totalReading: 640, totalPaused: 1800 });
   if (location.hash) showPage(location.hash.slice(1));
 }

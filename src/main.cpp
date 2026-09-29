@@ -4,6 +4,7 @@
 #include <objbase.h>
 #include <mfapi.h>
 #include <limits.h>
+#include <shellapi.h>
 
 static const wchar_t *RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const wchar_t *PROFILES_KEY = REG_KEY L"\\Profiles";
@@ -39,6 +40,14 @@ volatile LONG g_trueTone = 1, g_ttStrength = 60;
 volatile LONG g_ambientK = -1, g_displayK = 6500;
 volatile LONG g_ttSource = TT_NONE, g_ttOk = 1;
 static double g_camKelvin = -1;   // couleur de la lumiere mesuree par la derniere photo
+volatile LONG g_locked = 0, g_displayOff = 0, g_suspended = 0;
+volatile LONG g_onBattery = 0, g_batterySaver = 0;
+volatile LONG g_pauseFullscreen = 1, g_batteryMode = 1, g_batteryCut = 10;
+volatile LONG g_readMode = 0, g_pauseReason = PAUSE_NONE, g_camBusy = 0;
+volatile LONG g_osBright = -1, g_osBrightSeq = 0;
+volatile LONG g_externalBrightness = 1;
+volatile LONG g_ecoActive = 0;
+volatile LONG g_uiVisible = 0;
 wchar_t g_camChoice[128];
 volatile LONG g_lat = 4559, g_lon = -7344;   // Boucherville
 volatile LONG g_profilePct = -1;
@@ -108,7 +117,7 @@ void LoadProfiles() {
             DWORD nameLen = 64, type, v, sz = sizeof(v);
             LONG r = RegEnumValueW(k, i, p.exe, &nameLen, NULL, &type, (BYTE *)&v, &sz);
             if (r == ERROR_NO_MORE_ITEMS) break;
-            if (r != ERROR_SUCCESS || type != REG_DWORD || v < 1 || v > 100) continue;
+            if (r != ERROR_SUCCESS || type != REG_DWORD || v > 100) continue;   // 0 = jeu : l'app se desactive
             p.pct = (int)v;
             g_profileCount++;
         }
@@ -193,15 +202,7 @@ static void HistAdd(int light, int bright) {
     g_histLast = m;
 }
 
-static bool HistPath(wchar_t *path, bool create) {
-    wchar_t dir[MAX_PATH];
-    DWORD n = GetEnvironmentVariableW(L"APPDATA", dir, MAX_PATH);
-    if (!n || n > MAX_PATH - 40) return false;
-    wcscat(dir, L"\\LuminosityManager");
-    if (create) CreateDirectoryW(dir, NULL);
-    swprintf(path, MAX_PATH, L"%ls\\history.bin", dir);
-    return true;
-}
+static bool HistPath(wchar_t *path, bool create) { return AppDataFile(L"history.bin", path, create); }
 
 void HistLoad() {
     for (int i = 0; i < HIST_LEN; i++) g_hist[i].light = g_hist[i].bright = HIST_NONE;
@@ -298,6 +299,42 @@ static bool CameraLux(bool calibrate, double *lux) {
     return true;
 }
 
+// Une app est-elle en plein ecran (jeu, video, presentation) ?
+static bool FullscreenApp() {
+    QUERY_USER_NOTIFICATION_STATE q;
+    if (SUCCEEDED(SHQueryUserNotificationState(&q)) &&
+        (q == QUNS_RUNNING_D3D_FULL_SCREEN || q == QUNS_PRESENTATION_MODE || q == QUNS_BUSY))
+        return true;
+    // Jeux "plein ecran sans bordure" : la fenetre active couvre tout l'ecran
+    HWND w = GetForegroundWindow();
+    if (!w || w == g_hwnd) return false;
+    wchar_t cls[64];
+    GetClassNameW(w, cls, 64);
+    if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Shell_TrayWnd")) return false;
+    RECT r;
+    MONITORINFO mi = { sizeof(mi) };
+    if (!GetWindowRect(w, &r) || !GetMonitorInfoW(MonitorFromWindow(w, MONITOR_DEFAULTTONEAREST), &mi)) return false;
+    return r.left <= mi.rcMonitor.left && r.top <= mi.rcMonitor.top &&
+           r.right >= mi.rcMonitor.right && r.bottom >= mi.rcMonitor.bottom;
+}
+
+// Statistiques : une ligne par minute
+static void RecordMinute(bool off, bool paused, int bright, double lux, int ttK) {
+    static LONG lastMinute;
+    LONG m = NowMinute();
+    if (m == lastMinute) return;
+    lastMinute = m;
+    wchar_t app[64] = L"";
+    if (g_profilePct >= 0) {
+        EnterCriticalSection(&g_lock);
+        wcscpy(app, g_profileApp);
+        LeaveCriticalSection(&g_lock);
+    }
+    StatsSample s = { off, paused, g_readMode != 0, g_ecoActive != 0, bright, lux,
+                      g_source == SRC_SENSOR ? 0 : g_source == SRC_CAMERA ? 1 : 2, ttK, app };
+    StatsMinute(s);
+}
+
 // ---------- Boucle de travail (fil separe) ----------
 DWORD WINAPI Worker(LPVOID) {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -309,68 +346,123 @@ DWORD WINAPI Worker(LPVOID) {
     double camLux = -1;
     int current = BrightnessGet();
     int expectRead = -2;     // valeur relue apres notre dernier reglage (-2 = a resynchroniser)
-    int target = -1;
+    int target = -1, lastStatTarget = -1;
     bool warned = false, first = true;
-    int camTimer = 0;
-    LONG lastHistMinute = 0;
-    DWORD lastTick = 0;
+    DWORD camDue = 0;        // moment de la prochaine photo (GetTickCount)
+    LONG lastPostedBright = -2, lastPostedLux = -2;
+    LONG lastHistMinute = 0, seenSeq = g_osBrightSeq;
+    DWORD lastTick = 0, lastPoll = 0, lastSetTick = 0, lastFsCheck = 0, lastBusyCheck = 0;
+    bool notified = false, fullscreen = false, camBusy = false;
     double ambMired = -1;    // couleur de la piece lissee (en "mired" = 1 000 000 / Kelvin, comme l'oeil la percoit)
     double dispMired = 1e6 / 6500, appliedMired = 1e6 / 6500;
     bool colorChanged = false;
     DWORD lastColorApply = 0;
     HANDLE evs[2] = { g_quitEvent, g_wakeEvent };
 
+    auto setBrightness = [&](int pct) {
+        BrightnessSet(pct);
+        lastSetTick = GetTickCount();
+        int r = BrightnessGet();             // certains ecrans arrondissent (ex. 43 -> 40)
+        expectRead = r >= 0 ? r : -2;
+    };
+    auto resetColor = [&]() {
+        if (colorChanged) ColorReset();
+        colorChanged = false;
+        dispMired = appliedMired = 1e6 / 6500;
+        g_displayK = 6500;
+    };
+
     for (;;) {
         bool force = InterlockedExchange(&g_force, 0) != 0;
         bool calib = InterlockedExchange(&g_calibrate, 0) != 0;
         LONG nudge = InterlockedExchange(&g_nudge, 0);
-        bool tick = first || force || calib || nudge || GetTickCount() - lastTick >= 1000;
+        DWORD now = GetTickCount();
+        // Cadence : 1 s quand la fenetre est ouverte ; sinon 2 s (capteur) ou 5 s (webcam / soleil : la lumiere
+        // ne change pas si vite). x2 en economie d'energie. Moins de reveils = moins de batterie.
+        DWORD period = g_uiVisible ? 1000 : (g_source == SRC_SENSOR ? 2000 : 5000);
+        if (g_ecoActive && !g_uiVisible) period *= 2;
+        bool tick = first || force || calib || nudge || now - lastTick >= period;
 
         if (tick) {
-            lastTick = GetTickCount();
+            lastTick = now;
             if (force || calib) g_remeasure = 1;
-            int actual = BrightnessGet();
 
-            // App desactivee : on ne touche a rien (sauf les raccourcis +/-), pas de camera
-            if (!g_enabled) {
-                if (colorChanged) { ColorReset(); colorChanged = false; dispMired = appliedMired = 1e6 / 6500; g_displayK = 6500; }
-                if (nudge && current >= 0) { current = Clamp(current + nudge, 1, 100); BrightnessSet(current); }
+            // Luminosite reelle : Windows nous previent quand elle change ; sinon on la lit toutes les 10 s
+            int actual = -1;
+            LONG seq = g_osBrightSeq;
+            if (seq != seenSeq) { seenSeq = seq; notified = true; actual = g_osBright; }
+            else if (!notified && now - lastPoll >= 10000) { lastPoll = now; actual = BrightnessGet(); }
+            bool ownChange = now - lastSetTick < 2000;       // c'est nous qui venons de la changer
+
+            // Economie d'energie : 1 = sur batterie (ou economiseur), 2 = seulement avec l'economiseur de Windows
+            g_ecoActive = (g_batteryMode == 1 && (g_onBattery || g_batterySaver)) || (g_batteryMode == 2 && g_batterySaver);
+
+            // Pause : ordi verrouille, ecran eteint, veille, jeu (plein ecran ou marque "Jeu" dans les profils)
+            int profile = CheckProfiles();
+            g_profilePct = profile;
+            if (now - lastFsCheck >= 2000) { lastFsCheck = now; fullscreen = g_pauseFullscreen && FullscreenApp(); }
+            int pause = g_suspended ? PAUSE_SLEEP : g_locked ? PAUSE_LOCKED : g_displayOff ? PAUSE_SCREEN_OFF
+                      : profile == 0 ? PAUSE_GAME : fullscreen ? PAUSE_FULLSCREEN : PAUSE_NONE;
+            g_pauseReason = pause;
+
+            // App desactivee ou en pause : on ne touche a rien (sauf les raccourcis +/-), pas de camera.
+            // Pendant un jeu, les couleurs redeviennent normales (les vraies couleurs du jeu).
+            if (!g_enabled || pause) {
+                if (!g_enabled || pause == PAUSE_GAME || pause == PAUSE_FULLSCREEN) resetColor();
+                if (nudge && current >= 0) setBrightness(current = Clamp(current + nudge, 1, 100));
                 else if (actual >= 0) current = actual;
                 expectRead = -2;
                 target = -1;
                 g_bright = current;
+                RecordMinute(!g_enabled, pause != 0, current, -1, 0);
                 PostMessageW(g_hwnd, WM_UPDATE, 0, 0);
-                if (WaitForMultipleObjects(2, evs, FALSE, 1000) == WAIT_OBJECT_0) break;
+                // en pause, fenetre cachee : on se reveille rarement (Windows nous previent au deverrouillage)
+                if (WaitForMultipleObjects(2, evs, FALSE, g_uiVisible ? 1000 : 3000) == WAIT_OBJECT_0) break;
                 continue;
             }
 
             // 1) Mesurer la lumiere (lux)
             double lux = -1, sensorK = -1;
+            double sunE = SunElevation(g_lat / 100.0, g_lon / 100.0);
+            g_sunElev = (LONG)lround(sunE);
             if (SensorReadLux(&lux, &sensorK, force || first)) {
                 g_source = SRC_SENSOR;
+                g_camBusy = 0;
                 g_lastMeasure = (LONG)GetTickCount();
             } else {
+                // Economie d'energie : 4x moins de photos (la camera consomme de la batterie)
+                int interval = g_ecoActive ? (g_camInterval * 4 > MAX_INTERVAL ? MAX_INTERVAL : g_camInterval * 4) : g_camInterval;
                 if (g_useCam) {
-                    if (camTimer > g_camInterval) camTimer = g_camInterval;   // intervalle raccourci
-                    if (g_remeasure || --camTimer <= 0 || g_source != SRC_CAMERA) {
-                        g_remeasure = 0;
-                        camTimer = g_camInterval;        // une photo toutes les N secondes
-                        if (CameraLux(calib, &camLux)) {
-                            g_source = SRC_CAMERA;
-                            g_lastMeasure = (LONG)GetTickCount();
+                    if ((LONG)(camDue - now) > interval * 1000) camDue = now + interval * 1000;   // intervalle raccourci
+                    if (g_remeasure || (LONG)(now - camDue) >= 0 || (g_source != SRC_CAMERA && camLux < 0)) {
+                        // Une autre app utilise la webcam (Teams, Discord...) : on n'y touche pas
+                        if (g_remeasure || now - lastBusyCheck >= 3000) { lastBusyCheck = now; camBusy = WebcamBusyElsewhere(); }
+                        g_camBusy = camBusy;
+                        if (camBusy) {
+                            camDue = now + 3000;         // on reessaie dans 3 s, en gardant la derniere mesure
+                            if (camLux < 0) g_source = SRC_SUN;
                         } else {
-                            g_source = SRC_SUN;
+                            g_remeasure = 0;
+                            camDue = GetTickCount() + interval * 1000;   // une photo toutes les N secondes
+                            if (CameraLux(calib, &camLux)) {
+                                g_source = SRC_CAMERA;
+                                g_lastMeasure = (LONG)GetTickCount();
+                                StatsEvent(STAT_PHOTO);
+                            } else {
+                                g_source = SRC_SUN;
+                                camLux = -1;
+                            }
                         }
                     }
                 } else {
                     g_source = SRC_SUN;
+                    g_camBusy = 0;
                 }
-                g_camNext = camTimer;
-                if (g_source == SRC_CAMERA) lux = camLux;
+                g_camNext = (LONG)(camDue - GetTickCount()) > 0 ? (LONG)(camDue - GetTickCount() + 999) / 1000 : 0;
+                if (g_source == SRC_CAMERA && camLux >= 0) lux = camLux;
                 else {
-                    double e = SunElevation(g_lat / 100.0, g_lon / 100.0);
-                    g_sunElev = (LONG)lround(e);
-                    lux = SunLux(e);
+                    g_source = SRC_SUN;
+                    lux = SunLux(sunE);
                     g_lastMeasure = (LONG)GetTickCount();
                 }
                 if (!warned) { warned = true; PostMessageW(g_hwnd, WM_NOSENSOR, 0, 0); }
@@ -389,9 +481,7 @@ DWORD WINAPI Worker(LPVOID) {
             first = false;
 
             // 3) Tu as change la luminosite toi-meme (touches Fn / Windows) : on l'apprend a ce niveau de lumiere
-            int profile = CheckProfiles();
-            g_profilePct = profile;
-            if (actual >= 0) {
+            if (actual >= 0 && !ownChange) {
                 if (expectRead == -2) expectRead = actual;
                 else if (expectRead >= 0 && abs(actual - expectRead) >= 2) {
                     int delta = actual - expectRead;
@@ -408,6 +498,7 @@ DWORD WINAPI Worker(LPVOID) {
                         Learn(delta, t);
                         PostMessageW(g_hwnd, WM_LEARNED, (WPARAM)delta, 0);
                     }
+                    StatsEvent(STAT_MANUAL);
                 }
             }
             // Raccourcis +/- : meme chose (profil ou apprentissage)
@@ -425,42 +516,46 @@ DWORD WINAPI Worker(LPVOID) {
                     Learn(nudge, t);
                     PostMessageW(g_hwnd, WM_LEARNED, (WPARAM)nudge, 0);
                 }
+                StatsEvent(STAT_MANUAL);
             }
 
-            // 4) Luminosite voulue = courbe (entre min et max) + ajout + ce que l'app a appris
+            // 4) Luminosite voulue = courbe (entre min et max) + ajout + appris - batterie ; mode lecture : 70 %
             int detected = g_min + (int)lround(t * (g_max - g_min));
             double learned = LearnAt(g_learn, t);
+            int cut = g_ecoActive ? g_batteryCut + (g_batterySaver ? 5 : 0) : 0;
             g_detected = detected;
             g_learnNow = (LONG)lround(learned);
-            g_applied = Clamp(detected + g_offset + (int)lround(learned), g_min, g_max);
+            g_applied = Clamp(detected + g_offset + (int)lround(learned) - cut, g_min, g_max);
             target = profile >= 0 ? profile : g_applied;
+            if (g_readMode) target = (int)lround(target * 0.7);
             target = Clamp(target, 1, 100);
+            if (lastStatTarget >= 0 && abs(target - lastStatTarget) >= 2 && !nudge) StatsEvent(STAT_ADJUST);
+            lastStatTarget = target;
 
-            if (current < 0 || force || calib) {       // tout de suite, sans transition
-                current = target;
-                BrightnessSet(current);
-                int r = BrightnessGet();                // certains ecrans arrondissent (ex. 43 -> 40)
-                expectRead = r >= 0 ? r : -2;
-            }
+            if (current < 0 || force || calib) setBrightness(current = target);   // tout de suite, sans transition
 
             // 5) True Tone : la couleur du blanc de l'ecran suit (en partie) la couleur de la lumiere
             double ambK = -1;
             int ttSrc = TT_NONE;
             if (g_source == SRC_SENSOR && sensorK > 0) { ambK = sensorK; ttSrc = TT_SENSOR; }
             else if (g_source == SRC_CAMERA && g_camKelvin > 0) { ambK = g_camKelvin; ttSrc = TT_CAMERA; }
-            else { ambK = SunKelvin(SunElevation(g_lat / 100.0, g_lon / 100.0)); ttSrc = TT_SUN; }
+            else { ambK = SunKelvin(sunE); ttSrc = TT_SUN; }
             g_ttSource = ttSrc;
             double mAmb = 1e6 / ambK;
             // tres lent, comme sur iOS (environ 30 s pour suivre un changement)
             ambMired = (ambMired < 0 || force || calib) ? mAmb : ambMired + (mAmb - ambMired) * 0.08;
             g_ambientK = (LONG)lround(1e6 / ambMired);
-            if (g_trueTone) {
+            if (g_trueTone || g_readMode) {
                 const double m6500 = 1e6 / 6500;
-                // l'ecran va vers la couleur de la piece, sans la copier (70 % max, entre 4700 K et 7200 K)
-                double targetM = m6500 + (ambMired - m6500) * (g_ttStrength / 100.0) * 0.7;
-                if (targetM > 1e6 / 4700) targetM = 1e6 / 4700;
-                if (targetM < 1e6 / 7200) targetM = 1e6 / 7200;
-                dispMired += (targetM - dispMired) * ((force || calib) ? 1.0 : 0.12);
+                double targetM;
+                if (g_readMode) targetM = 1e6 / 3800;        // mode lecture : ecran chaud, doux pour les yeux
+                else {
+                    // l'ecran va vers la couleur de la piece, sans la copier (70 % max, entre 4700 K et 7200 K)
+                    targetM = m6500 + (ambMired - m6500) * (g_ttStrength / 100.0) * 0.7;
+                    if (targetM > 1e6 / 4700) targetM = 1e6 / 4700;
+                    if (targetM < 1e6 / 7200) targetM = 1e6 / 7200;
+                }
+                dispMired += (targetM - dispMired) * ((force || calib) ? 1.0 : g_readMode ? 0.3 : 0.12);
                 g_displayK = (LONG)lround(1e6 / dispMired);
                 // on reapplique si ca a change, ou toutes les 10 s (Windows remet parfois les couleurs a zero)
                 bool moved = fabs(dispMired - appliedMired) > 0.3;
@@ -470,40 +565,42 @@ DWORD WINAPI Worker(LPVOID) {
                     appliedMired = dispMired;
                     lastColorApply = GetTickCount();
                 }
-            } else if (colorChanged) {
-                ColorReset();
-                colorChanged = false;
-                dispMired = appliedMired = 1e6 / 6500;
-                g_displayK = 6500;
+            } else {
+                resetColor();
             }
 
-            // 6) Historique : un point par minute
+            // 6) Historique et statistiques : un point par minute
             LONG m = NowMinute();
             if (m != lastHistMinute) {
                 lastHistMinute = m;
                 HistAdd((int)lround(CurveT(pow(10.0, smoothLog) - 1) * 100), current);
             }
+            RecordMinute(false, false, current, lux, (g_trueTone || g_readMode) ? (int)g_displayK : 0);
             g_bright = current;
-            PostMessageW(g_hwnd, WM_UPDATE, 0, 0);
+            // Fenetre cachee : on ne la reveille que si quelque chose a change (texte de l'icone)
+            if (g_uiVisible || current != lastPostedBright || g_lux != lastPostedLux) {
+                lastPostedBright = current;
+                lastPostedLux = g_lux;
+                PostMessageW(g_hwnd, WM_UPDATE, 0, 0);
+            }
         }
 
         // 7) Transition douce : petits pas toutes les 0,15 s (plus rapide si l'ecart est grand)
         if (target >= 0 && current >= 0 && current != target) {
             int diff = target - current;
-            int step = Clamp(abs(diff) / 3, 1, 4);
+            // economie d'energie : moins de pas (moins de travail pour le processeur et l'ecran)
+            int step = g_ecoActive ? Clamp(abs(diff) / 2, 2, 8) : Clamp(abs(diff) / 3, 1, 4);
             current += diff > 0 ? step : -step;
-            BrightnessSet(current);
-            int r = BrightnessGet();
-            expectRead = r >= 0 ? r : -2;
+            setBrightness(current);
             g_bright = current;
         }
 
         DWORD elapsed = GetTickCount() - lastTick;
-        DWORD wait = (target >= 0 && current != target) ? 150 : (elapsed >= 1000 ? 0 : 1000 - elapsed);
+        DWORD wait = (target >= 0 && current != target) ? (g_ecoActive ? 300 : 150) : (elapsed >= period ? 0 : period - elapsed);
         if (WaitForMultipleObjects(2, evs, FALSE, wait) == WAIT_OBJECT_0) break;
     }
 
-    if (colorChanged) ColorReset();                  // couleurs normales en quittant
+    resetColor();                                    // couleurs normales en quittant
     SensorClose();
     BrightnessShutdown();
     MFShutdown();
@@ -523,6 +620,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
         return 0;
     }
     InitializeCriticalSection(&g_lock);
+    // Mode efficacite (Windows 11) : coeurs basse consommation, vitesse reduite. L'app fait tres peu de calculs.
+    PROCESS_POWER_THROTTLING_STATE eco = {};
+    eco.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    eco.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+    eco.StateMask = eco.ControlMask;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &eco, sizeof(eco));
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE,
                          NULL, EOAC_NONE, NULL);
@@ -551,6 +654,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     if (ref >= 50 && ref < 100000000) g_camRef = ref / 1000000.0;
     g_camLocked = RegGet(L"CamLocked", 0) ? 1 : 0;
     g_trueTone = RegGet(L"TrueTone", 1) ? 1 : 0;
+    g_pauseFullscreen = RegGet(L"PauseFullscreen", 1) ? 1 : 0;
+    g_batteryMode = (LONG)RegGet(L"BatteryMode", 1);   // 0 jamais, 1 sur batterie, 2 economiseur Windows
+    if (g_batteryMode < 0 || g_batteryMode > 2) g_batteryMode = 1;
+    g_batteryCut = (LONG)RegGet(L"BatteryCut", 10);
+    if (g_batteryCut < 0 || g_batteryCut > 50) g_batteryCut = 10;
+    g_externalBrightness = RegGet(L"ExternalBrightness", 1) ? 1 : 0;
     g_ttStrength = (LONG)RegGet(L"TrueToneStrength", 60);
     if (g_ttStrength < 0 || g_ttStrength > 100) g_ttStrength = 60;
     g_camLockValue = (LONG)RegGet(L"CamLockValue", (DWORD)LONG_MIN);
@@ -564,6 +673,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     if (StartupEnabled()) SetStartup(true);             // garde le chemin a jour (et --tray)
     LoadProfiles();
     HistLoad();
+    StatsLoad();
 
     g_quitEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     g_wakeEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -581,7 +691,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
 
     SetEvent(g_quitEvent);
     WaitForSingleObject(th, 5000);
-    HistSave();
+    if (!g_noSaveOnExit) { HistSave(); StatsSave(); }   // apres un import, on garde les fichiers importes
     MFShutdown();
     LaunchUpdatedAndExit();
     if (g_mutex) ReleaseMutex(g_mutex);

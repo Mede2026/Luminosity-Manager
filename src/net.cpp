@@ -174,7 +174,9 @@ void StartUpdateDownload() {
     if (t) CloseHandle(t); else g_busy = 0;
 }
 
-// Appele a la fermeture : relance la nouvelle version si elle vient d'etre installee.
+void RequestRestart() { g_launchNew = true; }
+
+// Appele a la fermeture : relance la nouvelle version si elle vient d'etre installee (ou apres un import).
 bool LaunchUpdatedAndExit() {
     if (!g_launchNew) return false;
     if (g_mutex) { ReleaseMutex(g_mutex); CloseHandle(g_mutex); g_mutex = NULL; }
@@ -227,6 +229,58 @@ static DWORD WINAPI CityThread(LPVOID) {
     InterlockedExchange(&g_cityBusy, 0);
     PostMessageW(g_hwnd, WM_CITY_FOUND, found, 0);
     return 0;
+}
+
+// ---------- Position automatique (d'apres la connexion internet) ----------
+// Le nombre peut etre ecrit 45.59 ou "45.59" selon le service
+static bool JsonCoord(const char *src, const char *key, double *v) {
+    if (JsonNumber(src, key, v)) return true;
+    wchar_t txt[32];
+    if (!JsonString(src, key, txt, 32) || !txt[0]) return false;
+    wchar_t *end;
+    *v = wcstod(txt, &end);
+    return end != txt;
+}
+
+static DWORD WINAPI LocateThread(LPVOID) {
+    // 3 services gratuits, essayes dans l'ordre (si l'un ne repond pas, le suivant prend le relais)
+    static const wchar_t *URLS[3] = { L"https://ipapi.co/json/", L"https://ipwho.is/", L"https://get.geojs.io/v1/ip/geo.json" };
+    static const char *COUNTRY[3] = { "country_name", "country", "country" };
+    WPARAM found = 0;
+    for (int i = 0; i < 3 && !found; i++) {
+        char *json;
+        DWORD len;
+        if (!HttpGet(URLS[i], &json, &len, 64 * 1024)) continue;
+        double lat, lon;
+        wchar_t city[64] = L"", region[64] = L"", country[64] = L"";
+        if (JsonCoord(json, "latitude", &lat) && JsonCoord(json, "longitude", &lon) &&
+            fabs(lat) <= 90 && fabs(lon) <= 180 && (lat != 0 || lon != 0)) {
+            JsonString(json, "city", city, 64);
+            JsonString(json, "region", region, 64);
+            JsonString(json, COUNTRY[i], country, 64);
+            g_lat = (LONG)lround(lat * 100);
+            g_lon = (LONG)lround(lon * 100);
+            RegPut(L"Latitude", (DWORD)g_lat);
+            RegPut(L"Longitude", (DWORD)g_lon);
+            EnterCriticalSection(&g_lock);
+            swprintf(g_cityResult, 160, L"%ls%ls%ls%ls%ls", city[0] ? city : L"Position détectée", region[0] ? L", " : L"",
+                     region, country[0] ? L", " : L"", country);
+            RegPutStr(L"City", g_cityResult);
+            LeaveCriticalSection(&g_lock);
+            RegPut(L"AutoLocated", 1);
+            found = 1;
+        }
+        free(json);
+    }
+    InterlockedExchange(&g_cityBusy, 0);
+    PostMessageW(g_hwnd, WM_CITY_FOUND, found, 0);
+    return 0;
+}
+
+void StartLocate() {
+    if (InterlockedCompareExchange(&g_cityBusy, 1, 0) != 0) return;
+    HANDLE t = CreateThread(NULL, 0, LocateThread, NULL, 0, NULL);
+    if (t) CloseHandle(t); else g_cityBusy = 0;
 }
 
 void StartCitySearch(const wchar_t *city) {

@@ -1,6 +1,6 @@
 # Luminosity Manager
 
-Application Windows légère (**~410 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
+Application Windows légère (**~460 Ko**, aucune installation) qui ajuste **automatiquement la luminosité de l'écran** selon la lumière de la pièce.
 
 ## Utilisation
 1. Va dans **Releases** (à droite sur la page GitHub) et télécharge `LuminosityManager.exe`.
@@ -8,6 +8,8 @@ Application Windows légère (**~410 Ko**, aucune installation) qui ajuste **aut
 3. La croix cache la fenêtre ; l'app continue près de l'horloge (icône ☀, grise quand l'app est désactivée). Clic gauche = rouvrir, clic droit = menu.
 
 **Légère** : la fenêtre utilise WebView2 (le moteur d'Edge, déjà dans Windows 10/11). Il n'existe **que quand la fenêtre est ouverte** : fenêtre cachée = ~3 Mo de mémoire.
+
+**Économe** : mode efficacité de Windows 11, une vérification toutes les 5 s fenêtre fermée (2 s avec un capteur), pause complète quand l'ordi est verrouillé / en veille / écran éteint, et Windows prévient l'app quand la luminosité change (elle ne demande pas sans arrêt).
 
 ## D'où vient la mesure de lumière ?
 | Priorité | Source | Quand |
@@ -17,6 +19,8 @@ Application Windows légère (**~410 Ko**, aucune installation) qui ajuste **aut
 | 3 | **Soleil** : heure + position de ta ville | Pas de webcam, ou webcam désactivée |
 
 ### Comment la webcam mesure la lumière
+- L'app mesure **les bords de l'image** (plafond, murs) et **ignore ton visage** au centre (il est éclairé par l'écran). La miniature montre la zone ignorée en pointillés.
+- **Jamais la webcam si une autre app l'utilise** (Teams, Discord…) : l'app garde la dernière mesure.
 - L'app **évite la caméra infrarouge** (Windows Hello), dont l'image est presque noire. Tu peux aussi choisir la caméra dans la page **Webcam**.
 - L'app **fixe elle-même l'exposition** (le temps pendant lequel la caméra capte la lumière) et l'ajuste d'un cran si l'image est trop noire ou trop blanche. Comme elle connaît l'exposition, elle calcule la vraie lumière (en lux, estimée).
 - **Exposition verrouillée** (page Webcam) : toujours la même exposition, choisie avec un curseur.
@@ -28,14 +32,17 @@ Application Windows légère (**~410 Ko**, aucune installation) qui ajuste **aut
 ## Fenêtre (style Windows 11, clair ou sombre selon Windows)
 | Page | Contenu |
 |---|---|
-| **Accueil** | Jauge de luminosité, état (actif / désactivé / profil), miniature webcam, graphique 24 h (survole pour voir l'heure) |
+| **Accueil** | Jauge, état (actif / pause / profil), miniature webcam couleur, graphique 24 h, Mesurer, **Mode lecture**, Désactiver |
+| **Statistiques** | Aujourd'hui / 7 / 30 / 90 jours : temps actif, luminosité et lumière moyennes, écran économisé (Wh estimés), ajustements, photos, journée type, types de lumière, sources, apps… |
 | **Luminosité** | Ajout −50 à +50 %, minimum / maximum, ta courbe (« Tu es ici », points appris), démarrage Windows |
 | **True Tone** | Couleur de la pièce → blanc de l'écran, activer, intensité |
-| **Webcam** | Photo, clarté, lux estimés, choix de la caméra, intervalle, calibrer |
-| **Profils d'apps** | Luminosité fixe par application (ex. `LumaFusion.exe` → 100 %) |
+| **Énergie et jeux** | Économie d'énergie (sur batterie / économiseur Windows / jamais), luminosité en moins, pause pendant les jeux, écrans externes |
+| **Webcam** | Photo, clarté, lux estimés, caméra, intervalle, exposition verrouillée, calibrer |
+| **Profils d'apps** | Luminosité fixe par app (ex. `LumaFusion.exe` → 100 %), ou **🎮 Jeu** : l'app se désactive |
 | **Raccourcis** | Clique puis appuie sur la nouvelle combinaison |
-| **Ville** | Recherche de ville ou coordonnées (mode Soleil) |
-| **Mises à jour** | Vérifier, mettre à jour en un clic |
+| **Ville** | Automatique (d'après la connexion), recherche ou coordonnées |
+| **Sauvegarde** | Exporter / importer **toutes** les données (réglages, profils, apprentissage, historique, statistiques) |
+| **Mises à jour** | Vérifier, mettre à jour en un clic (empreinte SHA-256 vérifiée) |
 
 Interrupteur **Activé** toujours visible en bas à gauche.
 
@@ -52,6 +59,12 @@ Le blanc de l'écran s'adapte à la **couleur** de la lumière de la pièce : pl
 - Réglable : activer / désactiver, **intensité** (page True Tone).
 - Technique : table de couleurs de l'écran (gamma ramp), comme f.lux. Les couleurs normales reviennent quand l'app est désactivée ou fermée.
 
+## Jeux, pauses et économie d'énergie
+- **Jeux** : en plein écran (jeux, vidéos) ou pour une app marquée « 🎮 Jeu », l'app se désactive et les couleurs redeviennent normales (réglable).
+- **Pause** quand l'ordi est verrouillé, en veille ou écran éteint : aucune photo webcam.
+- **Économie d'énergie** (sur batterie, ou seulement avec l'économiseur de Windows) : écran plus sombre (−10 % réglable, −5 % de plus avec l'économiseur), 4× moins de photos webcam, transitions plus simples.
+- **Mode lecture** (bouton, menu ou Ctrl+Alt+L) : écran 30 % plus sombre et chaud (3800 K).
+
 ## Il apprend de toi
 Si tu changes la luminosité toi-même (touches Fn, Windows ou raccourcis), l'app **le retient pour ce niveau de lumière seulement** : régler dans le noir ne change pas le plein jour. La page Luminosité montre ta courbe, les points appris, et un bouton « Oublier ». Si un profil d'app est actif, c'est le profil qui est mis à jour.
 
@@ -62,9 +75,10 @@ Si tu changes la luminosité toi-même (touches Fn, Windows ou raccourcis), l'ap
 | Ctrl + Alt + ↓ | Plus sombre (−5 %) |
 | Ctrl + Alt + M | Mesurer maintenant |
 | Ctrl + Alt + A | Activer / désactiver l'app |
+| Ctrl + Alt + L | Mode lecture |
 
 ## Mises à jour
-L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Mettre à jour » télécharge la nouvelle version, la met à la place de l'ancienne et la relance.
+L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Mettre à jour » télécharge la nouvelle version, **vérifie son empreinte SHA-256** (publiée avec la Release), la met à la place de l'ancienne et la relance.
 
 ## Écrans compatibles
 - Écran de portable : via WMI (Windows).
@@ -75,6 +89,8 @@ L'app vérifie une fois par jour s'il y a une nouvelle Release. Le bouton « Met
 - Interface : `src/ui/` (`index.html`, `style.css`, `app.js`). Ouvre `index.html` dans un navigateur pour voir le design avec des données de démo.
 - C++ ↔ page : messages JSON (`PostWebMessageAsJson` / `chrome.webview.postMessage`).
 - `src/webview2/WebView2.h` : généré avec `widl` depuis l'IDL officiel du SDK WebView2 (licence dans ce dossier).
+- Calculs purs (courbe, apprentissage, soleil, couleurs…) : `src/core.cpp`, testés par `tests/` (`./tests/run.sh`). GitHub lance les tests à chaque envoi, et avant chaque Release.
+- Statistiques : `src/stats.cpp` ; sauvegarde : `src/backup.cpp`.
 - Compiler : `./build.sh` (MinGW-w64). La version vient du fichier `VERSION`.
 - Icônes : `python3 src/make_icon.py`.
 - Police : [Inter](https://rsms.me/inter/) (licence SIL OFL 1.1, voir `src/ui/fonts/`), intégrée dans l'app.

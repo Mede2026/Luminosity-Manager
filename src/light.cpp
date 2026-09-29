@@ -75,7 +75,7 @@ void SensorClose() {
 // L'app regle elle-meme l'exposition (temps pendant lequel la camera capte la lumiere) :
 // comme elle connait l'exposition utilisee, elle peut calculer la vraie lumiere de la piece.
 // Sans ca, l'auto-exposition de la camera "corrige" l'image et la mesure ne veut plus rien dire.
-BYTE g_thumb[THUMB_W * THUMB_H];
+BYTE *g_thumb;                     // alloue a la 1re photo (ne grossit pas le .exe)
 volatile LONG g_thumbValid;
 wchar_t g_camUsed[128];
 
@@ -157,8 +157,17 @@ static bool AnalyzeFrame(IMFSample *smp, UINT32 w, UINT32 h, bool bottomUp, bool
         unsigned hist[256] = {};
         unsigned n = 0, nc = 0;
         double rs = 0, gs = 0, bs = 0;
+        // Ton visage (au centre) est eclaire par l'ecran : on ne mesure que les bords (plafond, murs, cotes)
+        static bool mask[64][64];
+        static UINT32 maskW, maskH;
+        if (maskW != w || maskH != h) {
+            for (int my = 0; my < 64; my++)
+                for (int mx = 0; mx < 64; mx++) mask[my][mx] = !InFaceZone((mx + 0.5) / 64, (my + 0.5) / 64);
+            maskW = w; maskH = h;
+        }
         for (UINT32 y = 0; y < h; y += 4)
             for (UINT32 x = 0; x < w; x += 4) {
+                if (!mask[y * 64 / h][x * 64 / w]) continue;
                 const BYTE *px = scan0 + (LONG)y * pitch + x * 4;
                 int luma = (px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8;
                 hist[luma]++;
@@ -186,7 +195,7 @@ static bool AnalyzeFrame(IMFSample *smp, UINT32 w, UINT32 h, bool bottomUp, bool
             }
             seen += c;
         }
-        if (cnt > 0) {
+        if (cnt > 0 && n > 0) {
             unsigned dark = 0, bright = 0;
             for (int v = 0; v < 12; v++) dark += hist[v];
             for (int v = 244; v < 256; v++) bright += hist[v];
@@ -196,12 +205,24 @@ static bool AnalyzeFrame(IMFSample *smp, UINT32 w, UINT32 h, bool bottomUp, bool
             st->bright = (double)bright / n;
             ok = true;
         }
-        if (thumb) {
-            for (int ty = 0; ty < THUMB_H; ty++)
+        if (thumb && !g_thumb) g_thumb = (BYTE *)calloc(THUMB_W * THUMB_H, 3);
+        if (thumb && g_thumb) {
+            // Miniature en couleur : chaque pixel = moyenne d'un petit carre de l'image (pas de "pixels" visibles)
+            for (int ty = 0; ty < THUMB_H; ty++) {
+                UINT32 y0 = ty * h / THUMB_H, y1 = (ty + 1) * h / THUMB_H;
                 for (int tx = 0; tx < THUMB_W; tx++) {
-                    const BYTE *px = scan0 + (LONG)(ty * h / THUMB_H) * pitch + (tx * w / THUMB_W) * 4;
-                    g_thumb[ty * THUMB_W + tx] = (BYTE)((px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8);
+                    UINT32 x0 = tx * w / THUMB_W, x1 = (tx + 1) * w / THUMB_W;
+                    unsigned r = 0, g = 0, b = 0, c = 0;
+                    for (UINT32 y = y0; y < y1 || y == y0; y++)
+                        for (UINT32 x = x0; x < x1 || x == x0; x++) {
+                            const BYTE *px = scan0 + (LONG)y * pitch + x * 4;
+                            b += px[0]; g += px[1]; r += px[2]; c++;
+                            if (x + 1 >= w) break;
+                        }
+                    BYTE *o = g_thumb + (ty * THUMB_W + tx) * 3;
+                    o[0] = (BYTE)(r / c); o[1] = (BYTE)(g / c); o[2] = (BYTE)(b / c);
                 }
+            }
             g_thumbValid = 1;
         }
     }
@@ -384,4 +405,48 @@ double SunElevation(double lat, double lon) {
     SYSTEMTIME t;
     GetSystemTime(&t);
     return SunElevationAt(lat, lon, t.wMonth, t.wDay, t.wHour, t.wMinute);
+}
+
+// ---------- La webcam est-elle utilisee par une autre app ? ----------
+// Windows note chaque utilisation de la camera (c'est ce qui affiche l'icone camera pres de l'horloge) :
+// ConsentStore\webcam\...\LastUsedTimeStop = 0 veut dire "en cours d'utilisation".
+static bool KeyInUse(HKEY k) {
+    ULONGLONG start = 0, stop = 1;
+    DWORD sz = sizeof(start);
+    if (RegGetValueW(k, NULL, L"LastUsedTimeStart", RRF_RT_REG_QWORD, NULL, &start, &sz) != ERROR_SUCCESS) return false;
+    sz = sizeof(stop);
+    if (RegGetValueW(k, NULL, L"LastUsedTimeStop", RRF_RT_REG_QWORD, NULL, &stop, &sz) != ERROR_SUCCESS) return false;
+    return start != 0 && stop == 0;
+}
+
+static bool ScanConsent(HKEY root, const wchar_t *path, const wchar_t *self) {
+    HKEY base;
+    if (RegOpenKeyExW(root, path, 0, KEY_READ, &base) != ERROR_SUCCESS) return false;
+    bool busy = false;
+    wchar_t name[512];
+    for (DWORD i = 0; !busy; i++) {
+        DWORD len = 512;
+        if (RegEnumKeyExW(base, i, name, &len, NULL, NULL, NULL, NULL) != ERROR_SUCCESS) break;
+        if (_wcsicmp(name, self) == 0) continue;           // c'est nous
+        HKEY k;
+        if (RegOpenKeyExW(base, name, 0, KEY_READ, &k) != ERROR_SUCCESS) continue;
+        busy = KeyInUse(k);
+        RegCloseKey(k);
+    }
+    RegCloseKey(base);
+    return busy;
+}
+
+bool WebcamBusyElsewhere() {
+    // Notre propre .exe apparait sous la forme "C:#Dossier#LuminosityManager.exe"
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(NULL, self, MAX_PATH);
+    for (wchar_t *p = self; *p; p++) if (*p == L'\\') *p = L'#';
+    const wchar_t *store = L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam";
+    wchar_t nonPackaged[200];
+    swprintf(nonPackaged, 200, L"%ls\\NonPackaged", store);
+    HKEY roots[2] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
+    for (HKEY r : roots)
+        if (ScanConsent(r, store, self) || ScanConsent(r, nonPackaged, self)) return true;
+    return false;
 }

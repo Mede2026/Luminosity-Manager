@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 // Lit la chaine JSON qui suit "key": dans src (gere \" \\ \/ et \uXXXX). Renvoie false si absente.
 bool JsonString(const char *src, const char *key, wchar_t *out, int n) {
@@ -106,3 +107,69 @@ void JsonOut::Num(const wchar_t *k, double v) {
 
 void JsonOut::Bool(const wchar_t *k, bool v) { Key(k); Raw(v ? L"true" : L"false"); }
 void JsonOut::KStr(const wchar_t *k, const wchar_t *v) { Key(k); Str(v); }
+
+// ---------- Lecture d'un objet JSON "plat" { "cle": "texte" ou nombre, ... } (sauvegardes) ----------
+static const char *ReadJsonString(const char *p, wchar_t **out) {
+    // p pointe apres le guillemet ouvrant ; renvoie apres le guillemet fermant
+    size_t cap = 256, len = 0;
+    char *tmp = (char *)malloc(cap);
+    while (tmp && *p && *p != '"') {
+        if (len + 8 >= cap) { cap *= 2; char *nt = (char *)realloc(tmp, cap); if (!nt) { free(tmp); tmp = NULL; break; } tmp = nt; }
+        if (*p == '\\' && p[1]) {
+            p++;
+            if (*p == 'u' && isxdigit((unsigned char)p[1]) && isxdigit((unsigned char)p[2]) &&
+                isxdigit((unsigned char)p[3]) && isxdigit((unsigned char)p[4])) {
+                char hex[5] = { p[1], p[2], p[3], p[4], 0 };
+                unsigned cp = (unsigned)strtoul(hex, NULL, 16);
+                if (cp < 0x80) tmp[len++] = (char)cp;
+                else if (cp < 0x800) { tmp[len++] = (char)(0xC0 | (cp >> 6)); tmp[len++] = (char)(0x80 | (cp & 0x3F)); }
+                else { tmp[len++] = (char)(0xE0 | (cp >> 12)); tmp[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                       tmp[len++] = (char)(0x80 | (cp & 0x3F)); }
+                p += 5;
+                continue;
+            }
+            tmp[len++] = *p == 'n' ? '\n' : *p == 't' ? '\t' : *p == 'r' ? '\r' : *p;
+            p++;
+            continue;
+        }
+        tmp[len++] = *p++;
+    }
+    if (*p == '"') p++;
+    *out = NULL;
+    if (tmp) {
+        tmp[len] = 0;
+        int n = MultiByteToWideChar(CP_UTF8, 0, tmp, -1, NULL, 0);
+        *out = (wchar_t *)malloc(n * sizeof(wchar_t));
+        if (*out) MultiByteToWideChar(CP_UTF8, 0, tmp, -1, *out, n);
+        free(tmp);
+    }
+    return p;
+}
+
+void JsonForEach(const char *json, JsonEntryFn fn, void *user) {
+    const char *p = strchr(json, '{');
+    if (!p) return;
+    p++;
+    for (;;) {
+        while (*p && *p != '"' && *p != '}') p++;
+        if (*p != '"') return;
+        wchar_t *key;
+        p = ReadJsonString(p + 1, &key);
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' || *p == ':') p++;
+        if (*p == '"') {
+            wchar_t *val;
+            p = ReadJsonString(p + 1, &val);
+            if (key && val) fn(key, true, val, 0, user);
+            free(val);
+        } else {
+            char *end;
+            double v = strtod(p, &end);
+            if (end != p && key) fn(key, false, L"", v, user);
+            p = end != p ? end : p + 1;
+        }
+        free(key);
+        while (*p && *p != ',' && *p != '}') p++;
+        if (*p != ',') return;
+        p++;
+    }
+}

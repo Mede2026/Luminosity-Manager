@@ -24,8 +24,8 @@ double RgbToKelvin(double r, double g, double b);// couleur moyenne (RGB lineair
 // Webcam : zone du visage (au centre) ignoree, on mesure les bords. x, y entre 0 et 1.
 bool InFaceZone(double x, double y);
 
-// Statistiques : categorie de lumiere (0 nuit, 1 sombre, 2 tamise, 3 interieur, 4 lumineux, 5 plein jour)
-static const int LIGHT_CATS = 6;
+// Statistiques : categorie de lumiere (0 nuit, 1 sombre, 2 interieur, 3 lumineux, 4 plein jour)
+static const int LIGHT_CATS = 5;
 int LightCategory(double lux);
 
 // Versions : "v0.10" > "0.9"

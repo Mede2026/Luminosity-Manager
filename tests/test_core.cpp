@@ -63,8 +63,9 @@ static void TestFaceZone() {
 }
 
 static void TestCategories() {
-    CHECK(LightCategory(2) == 0 && LightCategory(30) == 1 && LightCategory(100) == 2);
-    CHECK(LightCategory(300) == 3 && LightCategory(1000) == 4 && LightCategory(50000) == 5);
+    CHECK(LightCategory(2) == 0 && LightCategory(30) == 1 && LightCategory(200) == 2);
+    CHECK(LightCategory(1000) == 3 && LightCategory(50000) == 4);
+    CHECK(LightCategory(10) == 1 && LightCategory(9.9) == 0);        // limites
 }
 
 static void TestVersions() {

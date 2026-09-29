@@ -20,6 +20,10 @@
     <symbol id="i-update" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4.5h-4.5"/></symbol>
     <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v8M7 6.3a7.5 7.5 0 1 0 10 0"/></symbol>
     <symbol id="i-tone" viewBox="0 0 24 24"><path d="M10 13.8V5.2a2 2 0 0 1 4 0v8.6a4.2 4.2 0 1 1-4 0z"/><circle cx="12" cy="17.3" r="1.6" class="fill"/><path d="M17 6h2.5M17 9.5h2.5"/></symbol>
+    <symbol id="i-stats" viewBox="0 0 24 24"><path d="M4 20h16M7 16.5V11M12 16.5V6M17 16.5v-8"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2.2"/><path d="M21.5 10.5v3M6.5 10v4M9.5 10v4"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19.5h14"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6.5c-2-1.6-5-2-8-1.5v13c3-.5 6-.1 8 1.5 2-1.6 5-2 8-1.5V5c-3-.5-6-.1-8 1.5zM12 6.5v13"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l1 13h9l1-13"/></symbol>
   </defs>
 </svg>
@@ -32,12 +36,15 @@
       <div><b>Luminosity</b><small>Manager <span id="version"></span></small></div>
     </div>
     <a class="nav active" data-page="home"><svg><use href="#i-home"/></svg>Accueil</a>
+    <a class="nav" data-page="stats"><svg><use href="#i-stats"/></svg>Statistiques</a>
     <a class="nav" data-page="brightness"><svg><use href="#i-bright"/></svg>Luminosité</a>
     <a class="nav" data-page="truetone"><svg><use href="#i-tone"/></svg>True Tone</a>
+    <a class="nav" data-page="energy"><svg><use href="#i-battery"/></svg>Énergie et jeux</a>
     <a class="nav" data-page="camera"><svg><use href="#i-cam"/></svg>Webcam</a>
     <a class="nav" data-page="profiles"><svg><use href="#i-apps"/></svg>Profils d'apps</a>
     <a class="nav" data-page="keys"><svg><use href="#i-key"/></svg>Raccourcis</a>
     <a class="nav" data-page="city"><svg><use href="#i-pin"/></svg>Ville</a>
+    <a class="nav" data-page="backup"><svg><use href="#i-save"/></svg>Sauvegarde</a>
     <a class="nav" data-page="updates"><svg><use href="#i-update"/></svg>Mises à jour<span class="dot" id="upd-dot" hidden></span></a>
     <div class="spacer"></div>
     <label class="master">
@@ -63,7 +70,7 @@
           <div class="gauge-label">Écran</div>
         </div>
         <div class="hero-info">
-          <div class="pill" id="status"><i></i><span>Chargement…</span></div>
+          <div class="pills"><div class="pill" id="status"><i></i><span>Chargement…</span></div><span class="badge" id="badge-eco" hidden>🔋 Économie d'énergie</span><span class="badge" id="badge-read" hidden>📖 Mode lecture</span></div>
           <div class="facts">
             <div class="fact"><span>Source</span><b id="source">—</b></div>
             <div class="fact"><span>Lumière</span><b id="light">—</b></div>
@@ -72,11 +79,12 @@
           </div>
           <div class="actions">
             <button class="accent" id="btn-measure">Mesurer maintenant</button>
+            <button id="btn-read"><svg class="btn-icon"><use href="#i-book"/></svg><span>Mode lecture</span></button>
             <button id="btn-toggle">Désactiver</button>
           </div>
         </div>
         <div class="thumb" id="home-thumb">
-          <canvas width="64" height="48"></canvas>
+          <canvas width="160" height="120"></canvas>
           <div class="thumb-empty"><svg><use href="#i-sun"/></svg><span>Mode soleil</span></div>
         </div>
       </div>
@@ -92,6 +100,28 @@
           <div class="chart-empty" id="chart-empty">Les données apparaîtront ici, minute par minute.</div>
         </div>
       </div>
+    </section>
+
+    <!-- STATISTIQUES -->
+    <section class="page" id="page-stats">
+      <div class="page-head">
+        <h1>Statistiques</h1>
+        <div class="segmented" id="stats-range">
+          <button data-days="1">Aujourd'hui</button><button data-days="7" class="on">7 jours</button><button data-days="30">30 jours</button><button data-days="90">90 jours</button>
+        </div>
+      </div>
+      <div class="tiles" id="stats-tiles"></div>
+      <div class="stats-grid">
+        <div class="card"><div class="card-head"><h2>Luminosité moyenne par jour</h2><small class="muted">% de l'écran</small></div><div class="bars" id="chart-days-bright"></div></div>
+        <div class="card"><div class="card-head"><h2>Lumière moyenne par jour</h2><small class="muted">lux</small></div><div class="bars" id="chart-days-lux"></div></div>
+        <div class="card wide"><div class="card-head"><h2>Ta journée type</h2><small class="muted">luminosité moyenne de l'écran selon l'heure (depuis le début)</small></div><div class="bars" id="chart-hours"></div></div>
+        <div class="card wide"><div class="card-head"><h2>La lumière de ta pièce</h2><small class="muted">temps passé dans chaque type de lumière</small></div><div id="chart-cats"></div></div>
+        <div class="card"><div class="card-head"><h2>Ton temps</h2></div><div class="hbars" id="chart-time"></div></div>
+        <div class="card"><div class="card-head"><h2>Comment la lumière a été mesurée</h2></div><div class="hbars" id="chart-src"></div></div>
+        <div class="card"><div class="card-head"><h2>Apps avec un profil</h2></div><div class="hbars" id="chart-apps"></div></div>
+        <div class="card"><div class="card-head"><h2>Depuis le début</h2><small class="muted" id="stats-since"></small></div><div class="totals" id="stats-totals"></div></div>
+      </div>
+      <div class="row-end"><button id="btn-stats-reset">Remettre les statistiques à zéro</button></div>
     </section>
 
     <!-- LUMINOSITE -->
@@ -129,6 +159,48 @@
           <div class="row-text"><b>Lancer au démarrage de Windows</b><small>L'app démarre cachée près de l'horloge.</small></div>
           <div class="row-ctl"><input type="checkbox" class="switch" id="startup"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ENERGIE ET JEUX -->
+    <section class="page" id="page-energy">
+      <h1>Énergie et jeux</h1>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>🔋 Économie d'énergie</b><small>Quand elle est active : écran un peu plus sombre, 4× moins de photos webcam, transitions plus simples.</small></div>
+          <div class="row-ctl"><select id="batteryMode">
+            <option value="1">Sur batterie</option>
+            <option value="2">Seulement avec l'économiseur de Windows</option>
+            <option value="0">Jamais</option>
+          </select></div>
+        </div>
+        <div class="row" id="cut-row">
+          <div class="row-text"><b>Luminosité en moins</b><small>Encore 5 % de plus quand l'économiseur de batterie de Windows est activé.</small></div>
+          <div class="row-ctl slider-ctl"><input type="range" id="batteryCut" min="0" max="30" step="1"><output id="batteryCut-val">−10 %</output></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>État</b><small id="eco-state">—</small></div>
+        </div>
+      </div>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>🎮 Se désactiver pendant les jeux</b><small>Jeux et vidéos en plein écran : la luminosité ne bouge plus et les couleurs redeviennent normales. Pour un jeu en fenêtre, coche « Jeu » dans Profils d'apps.</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="pauseFullscreen"></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Écrans externes</b><small>Régler aussi la luminosité des écrans branchés (DDC/CI, à activer dans le menu de l'écran).</small></div>
+          <div class="row-ctl"><input type="checkbox" class="switch" id="external"></div>
+        </div>
+      </div>
+      <div class="card info">
+        <b>L'app elle-même consomme très peu</b>
+        <ul>
+          <li>Mode efficacité de Windows 11 (cœurs basse consommation).</li>
+          <li>Fenêtre fermée : une vérification toutes les 5 s (2 s avec un capteur), 2× moins en économie d'énergie.</li>
+          <li>Pause complète quand l'ordi est verrouillé, en veille ou écran éteint.</li>
+          <li>Windows prévient l'app quand quelque chose change, au lieu qu'elle demande sans arrêt.</li>
+          <li>La fenêtre (moteur Edge) n'existe que quand elle est ouverte.</li>
+        </ul>
       </div>
     </section>
 
@@ -171,12 +243,12 @@
       <p class="intro">S'il n'y a pas de capteur de lumière, l'app prend une petite photo de temps en temps pour mesurer la lumière de la pièce. La photo n'est jamais enregistrée.</p>
       <div class="card cam-preview">
         <div class="thumb big" id="cam-thumb">
-          <canvas width="64" height="48"></canvas>
+          <canvas width="160" height="120"></canvas>
           <div class="thumb-empty"><svg><use href="#i-cam"/></svg><span>Pas encore de photo</span></div>
         </div>
         <div class="cam-side">
           <div class="cam-stats">
-            <div class="fact"><span>Clarté de l'image</span><b id="cam-level">—</b></div>
+            <div class="fact"><span>Clarté des bords</span><b id="cam-level">—</b></div>
             <div class="fact"><span>Lumière estimée</span><b id="cam-lux">—</b></div>
             <div class="fact"><span>Exposition</span><b id="cam-exp">—</b></div>
             <div class="fact"><span>Prochaine photo</span><b id="cam-next">—</b></div>
@@ -219,7 +291,8 @@
       <div class="card add-profile">
         <input type="text" id="p-exe" placeholder="Nom de l'app (ex. LumaFusion.exe)" spellcheck="false">
         <button id="btn-pick" title="Prend la dernière app utilisée avant d'ouvrir cette fenêtre">App active</button>
-        <div class="slider-ctl"><input type="range" id="p-pct" min="1" max="100" value="100"><output id="p-pct-val">100 %</output></div>
+        <div class="slider-ctl" id="p-pct-ctl"><input type="range" id="p-pct" min="1" max="100" value="100"><output id="p-pct-val">100 %</output></div>
+        <label class="check"><input type="checkbox" id="p-game"> 🎮 Jeu : désactiver l'app</label>
         <button class="accent" id="btn-add">Ajouter</button>
       </div>
       <div class="card group" id="profile-list"></div>
@@ -240,6 +313,7 @@
       <div class="card city-search">
         <input type="text" id="city" placeholder="Chercher une ville…" spellcheck="false">
         <button class="accent" id="btn-city">Chercher</button>
+        <button id="btn-locate" title="D'après ta connexion internet">📍 Automatique</button>
       </div>
       <div class="card group">
         <div class="row">
@@ -253,6 +327,22 @@
             <input type="text" id="lon" placeholder="Longitude">
             <button id="btn-latlon">Appliquer</button>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SAUVEGARDE -->
+    <section class="page" id="page-backup">
+      <h1>Sauvegarde</h1>
+      <p class="intro">Un seul fichier avec <b>toutes</b> les données de l'app : réglages, profils d'apps, ce que l'app a appris, historique et statistiques. Pratique pour un nouveau PC ou avant de tout réinstaller.</p>
+      <div class="card group">
+        <div class="row">
+          <div class="row-text"><b>Exporter</b><small>Enregistre un fichier .json (tu choisis où).</small></div>
+          <div class="row-ctl"><button class="accent" id="btn-export">Exporter mes données</button></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Importer</b><small>Remplace toutes les données par celles d'une sauvegarde. L'app redémarre.</small></div>
+          <div class="row-ctl"><button id="btn-import">Importer une sauvegarde</button></div>
         </div>
       </div>
     </section>
