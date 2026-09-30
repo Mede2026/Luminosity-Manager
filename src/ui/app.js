@@ -504,8 +504,17 @@ function renderKeys() {
     box.appendChild(row);
   });
 }
+// Nouveau raccourci annule si on quitte la page ou la fenetre (sinon plus aucune touche ne marcherait)
+function stopCapture() {
+  if (capturing < 0) return;
+  capturing = -1;
+  send('hotkeyCapture', { value: 0 });
+  renderKeys();
+}
+window.addEventListener('blur', stopCapture);
 document.addEventListener('keydown', (e) => {
   if (capturing < 0) return;
+  if (!document.getElementById('page-keys').classList.contains('active')) { stopCapture(); return; }
   e.preventDefault();
   if (e.key === 'Escape') { capturing = -1; send('hotkeyCapture', { value: 0 }); renderKeys(); return; }
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
@@ -552,6 +561,7 @@ document.querySelectorAll('.tt-labels span').forEach((sp) => {
 $('p-game').onchange = (e) => $('p-pct-ctl').classList.toggle('disabled', e.target.checked);
 $('p-pct').oninput = (e) => { setRange(e.target, +e.target.value); $('p-pct-val').textContent = e.target.value + ' %'; };
 $('btn-pick').onclick = () => send('pickApp');
+$('btn-browse').onclick = () => send('browseApp');
 $('btn-add').onclick = () => {
   const exe = $('p-exe').value.trim();
   if (!exe) { toast('Écris le nom de l\'app ou clique sur « App active ».'); return; }
@@ -709,7 +719,9 @@ function tile(label, value, note) {
 function renderStats() {
   if (!stats) return;
   document.querySelectorAll('#stats-range button').forEach((b) => b.classList.toggle('on', +b.dataset.days === statsRange));
-  const days = stats.days.filter((d) => d.ago < statsRange);
+  // « Tout » (0) : totaux depuis le debut (gardes pour toujours) ; sinon les N derniers jours
+  const all = statsRange === 0;
+  const days = all ? (stats.all ? [stats.all] : stats.days) : stats.days.filter((d) => d.ago < statsRange);
   const sum = (f) => days.reduce((a, d) => a + f(d), 0);
   const active = sum((d) => d.active);
   const brightAvg = active ? sum((d) => (d.bright >= 0 ? d.bright * d.active : 0)) / active : -1;
@@ -719,7 +731,7 @@ function renderStats() {
   const ttAvg = ttMin ? sum((d) => (d.displayK > 0 ? d.displayK * d.trueTone : 0)) / ttMin : -1;
   // Energie : on compte ~6 W pour un ecran de portable a 100 % (estimation)
   const wh = sum((d) => (d.bright >= 0 ? (d.active / 60) * 6 * (100 - d.bright) / 100 : 0));
-  const period = statsRange === 1 ? 'aujourd\'hui' : statsRange + ' derniers jours';
+  const period = all ? 'depuis le ' + fmtDate(stats.since, true) : statsRange === 1 ? 'aujourd\'hui' : statsRange + ' derniers jours';
 
   const tiles = $('stats-tiles');
   tiles.innerHTML = '';
@@ -735,7 +747,9 @@ function renderStats() {
   );
 
   // Colonnes par jour (au moins 7 jours pour que ca reste lisible)
-  const span = Math.max(7, statsRange);
+  // « Tout » : chaque jour depuis le debut (les 120 derniers jours sont gardes en detail)
+  const sinceDays = Math.round((parseDate(stats.today) - parseDate(stats.since)) / 86400000) + 1;
+  const span = Math.max(7, all ? Math.min(120, sinceDays) : statsRange);
   const byAgo = new Map(stats.days.map((d) => [d.ago, d]));
   const today = parseDate(stats.today);
   const slots = [];

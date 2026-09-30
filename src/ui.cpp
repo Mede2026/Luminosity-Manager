@@ -1,6 +1,7 @@
 // Fenetre (qui affiche l'interface HTML via WebView2), icone pres de l'horloge et raccourcis clavier.
 // L'interface elle-meme est dans src/ui/ (HTML, CSS, JavaScript) ; ici on echange des messages JSON avec elle.
 #include "app.h"
+#include <commdlg.h>
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <limits.h>
@@ -605,6 +606,29 @@ void OnPageMessage(const char *json) {
     }
     else if (!wcscmp(cmd, L"addProfile"))    { AddProfile(json); SendProfiles(); }
     else if (!wcscmp(cmd, L"deleteProfile")) { DeleteProfile(text); SendProfiles(); }
+    else if (!wcscmp(cmd, L"browseApp")) {        // « Parcourir… » : choisir le .exe d'une app
+        wchar_t path[MAX_PATH] = L"", dir[MAX_PATH] = L"";
+        GetEnvironmentVariableW(L"ProgramFiles", dir, MAX_PATH);
+        OPENFILENAMEW of = { sizeof(of) };
+        of.hwndOwner = g_hwnd;
+        of.lpstrFilter = L"Applications (*.exe)\0*.exe\0";
+        of.lpstrFile = path;
+        of.nMaxFile = MAX_PATH;
+        of.lpstrInitialDir = dir;
+        of.lpstrTitle = L"Choisis l'application";
+        of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_DONTADDTORECENT;
+        if (GetOpenFileNameW(&of)) {
+            const wchar_t *name = wcsrchr(path, L'\\');
+            wchar_t app[64];
+            wcsncpy(app, name ? name + 1 : path, 63);
+            app[63] = 0;
+            JsonOut j;
+            Begin(j, L"pickedApp");
+            j.KStr(L"app", app);
+            Post(j);
+        }
+        WebViewFocus();
+    }
     else if (!wcscmp(cmd, L"pickApp")) {
         wchar_t app[64];
         EnterCriticalSection(&g_lock);
@@ -827,6 +851,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return DefWindowProcW(h, msg, wp, lp);
     case WM_SIZE:
         WebViewResize();
+        return 0;
+    case WM_ACTIVATE:                            // fenetre activee : le clavier va a la page
+        if (LOWORD(wp) != WA_INACTIVE) WebViewFocus();
+        return 0;
+    case WM_SETFOCUS:
+        WebViewFocus();
         return 0;
     case WM_MOVE:
         WebViewMoved();

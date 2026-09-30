@@ -113,7 +113,7 @@
       <div class="page-head">
         <h1>Statistiques</h1>
         <div class="segmented" id="stats-range">
-          <button data-days="1">Aujourd'hui</button><button data-days="7" class="on">7 jours</button><button data-days="30">30 jours</button><button data-days="90">90 jours</button>
+          <button data-days="1">Aujourd'hui</button><button data-days="7" class="on">7 jours</button><button data-days="30">30 jours</button><button data-days="90">90 jours</button><button data-days="0">Tout</button>
         </div>
       </div>
       <div class="tiles" id="stats-tiles"></div>
@@ -303,6 +303,7 @@
       <p class="intro">Luminosité fixe quand une application est au premier plan. Exemple : LumaFusion à 100 % pour voir les vraies couleurs de tes vidéos.</p>
       <div class="card add-profile">
         <input type="text" id="p-exe" placeholder="Nom de l'app (ex. LumaFusion.exe)" spellcheck="false">
+        <button id="btn-browse" title="Choisir le fichier .exe de l'application">Parcourir…</button>
         <button id="btn-pick" title="Prend la dernière app utilisée avant d'ouvrir cette fenêtre">App active</button>
         <div class="slider-ctl" id="p-pct-ctl"><input type="range" id="p-pct" min="1" max="100" value="100"><output id="p-pct-val">100 %</output></div>
         <label class="check"><input type="checkbox" id="p-game"> 🎮 Jeu : désactiver l'app</label>

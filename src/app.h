@@ -227,6 +227,7 @@ void WebViewResize();
 void WebViewMoved();
 bool WebViewPost(const wchar_t *json);            // envoie un message a la page
 bool WebViewAlive();
+void WebViewFocus();                              // le clavier va a la page
 void OnPageMessage(const char *json);             // ui.cpp : message recu de la page (UTF-8)
 void OnWebViewFailed();                           // ui.cpp : WebView2 n'a pas pu demarrer
 

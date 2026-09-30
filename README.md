@@ -41,12 +41,12 @@ Application Windows légère (**~520 Ko**, installation en un clic, sans droits 
 | Page | Contenu |
 |---|---|
 | **Accueil** | Jauge, état (actif / pause / profil), miniature webcam couleur, graphique 24 h, Mesurer, **Mode lecture**, Désactiver |
-| **Statistiques** | Aujourd'hui / 7 / 30 / 90 jours (gardées 120 jours, jamais effacées par erreur) : temps actif, luminosité et lumière moyennes, écran économisé (Wh estimés), ajustements, photos, journée type, types de lumière, sources, apps… |
+| **Statistiques** | Aujourd'hui / 7 / 30 / 90 jours / **Tout** (depuis le début ; le détail par jour est gardé 120 jours, les totaux pour toujours) : temps actif, luminosité et lumière moyennes, écran économisé (Wh estimés), ajustements, photos, journée type, types de lumière, sources, apps… |
 | **Luminosité** | Ajout −50 à +50 %, minimum / maximum, ta courbe (« Tu es ici », points appris), démarrage Windows |
 | **True Tone** | Couleur de la pièce → blanc de l'écran, activer, intensité |
 | **Énergie et jeux** | Économie d'énergie (sur batterie / économiseur Windows / jamais), luminosité en moins, consommation de l'app en direct, pause pendant les jeux, pas de photo quand tu n'es pas là, écrans externes |
 | **Webcam** | Photo, clarté, lux estimés, caméra, intervalle, exposition verrouillée, calibrer |
-| **Profils d'apps** | Luminosité fixe par app (ex. `LumaFusion.exe` → 100 %), ou **🎮 Jeu** : l'app se désactive |
+| **Profils d'apps** | Luminosité fixe par app (ex. `LumaFusion.exe` → 100 %), ou **🎮 Jeu** : l'app se désactive. Nom écrit, **Parcourir…** (choisir le `.exe`) ou « App active » |
 | **Raccourcis** | Clique puis appuie sur la nouvelle combinaison |
 | **Ville** | Automatique (d'après la connexion), recherche ou coordonnées |
 | **Sauvegarde** | Exporter / importer **toutes** les données (réglages, profils, apprentissage, historique, statistiques) |

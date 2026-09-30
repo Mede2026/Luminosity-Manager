@@ -285,3 +285,8 @@ bool WebViewPost(const wchar_t *json) {
 }
 
 bool WebViewAlive() { return g_view != NULL; }
+
+// Donne le clavier a la page (sinon, apres Alt+Tab ou l'icone, le curseur clignote mais les touches se perdent)
+void WebViewFocus() {
+    if (g_ctrl) g_ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+}
